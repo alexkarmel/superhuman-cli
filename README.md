@@ -362,6 +362,29 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
+### Send disabled by default (draft-only)
+
+By default the MCP runs in **draft-only mode**: Claude does not see the ability to send email.
+
+- The **superhuman_send** tool is not registered.
+- **superhuman_reply**, **superhuman_reply_all**, and **superhuman_forward** only create drafts (no `send` parameter). Claude is told the user sends manually from Superhuman.
+
+The installer sets `SUPERHUMAN_MCP_DISABLE_SEND=1` so this is explicit. To **allow send** (expose the send tool and send option), set:
+
+```bash
+SUPERHUMAN_MCP_DISABLE_SEND=0
+```
+
+(or `false`) in the MCP server environment. In Claude Desktop config:
+
+```json
+"superhuman": {
+  "command": "bun",
+  "args": ["/path/to/superhuman-cli/src/index.ts", "--mcp"],
+  "env": { "SUPERHUMAN_MCP_DISABLE_SEND": "0" }
+}
+```
+
 ## How It Works
 
 ### Direct API (Primary)

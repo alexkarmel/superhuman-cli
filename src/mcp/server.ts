@@ -9,6 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   DraftSchema, SendSchema, SearchSchema, InboxSchema, ReadSchema,
   AccountsSchema, SwitchAccountSchema, ReplySchema, ReplyAllSchema, ForwardSchema,
+  ReplySchemaDraftOnly, ReplyAllSchemaDraftOnly, ForwardSchemaDraftOnly,
   ArchiveSchema, DeleteSchema,
   MarkReadSchema, MarkUnreadSchema, LabelsSchema, GetLabelsSchema, AddLabelSchema, RemoveLabelSchema,
   StarSchema, UnstarSchema, StarredSchema,
@@ -26,6 +27,7 @@ import {
   SnippetsSchema, UseSnippetSchema,
   snippetsHandler, useSnippetHandler,
   AskAISchema, askAIHandler,
+  SEND_DISABLED,
 } from "./tools";
 
 function createMcpServer(): McpServer {
@@ -43,14 +45,16 @@ function createMcpServer(): McpServer {
     draftHandler
   );
 
-  server.registerTool(
-    "superhuman_send",
-    {
-      description: "Send an email immediately. Use ONLY when the user explicitly asks to send or 'send now'. Do not use for creating drafts; use superhuman_draft for drafts.",
-      inputSchema: SendSchema,
-    },
-    sendHandler
-  );
+  if (!SEND_DISABLED) {
+    server.registerTool(
+      "superhuman_send",
+      {
+        description: "Send an email immediately. Use ONLY when the user explicitly asks to send or 'send now'. Do not use for creating drafts; use superhuman_draft for drafts.",
+        inputSchema: SendSchema,
+      },
+      sendHandler
+    );
+  }
 
   server.registerTool(
     "superhuman_search",
@@ -100,8 +104,10 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_reply",
     {
-      description: "Reply in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply' or 'respond to this thread'. For 'create a draft', 'draft a response', or 'write a draft' use superhuman_draft instead — reply does not create the same visible drafts. Optional send=true sends immediately; default is draft in thread.",
-      inputSchema: ReplySchema,
+      description: SEND_DISABLED
+        ? "Create a reply draft in-thread for a specific email (requires threadId). Use when the user asks to 'reply' or 'respond to this thread'. Creates a draft only; user sends manually from Superhuman."
+        : "Reply in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply' or 'respond to this thread'. For 'create a draft', 'draft a response', or 'write a draft' use superhuman_draft instead — reply does not create the same visible drafts. Optional send=true sends immediately; default is draft in thread.",
+      inputSchema: SEND_DISABLED ? ReplySchemaDraftOnly : ReplySchema,
     },
     replyHandler
   );
@@ -109,8 +115,10 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_reply_all",
     {
-      description: "Reply-all in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply all' or 'reply to all'. For drafts use superhuman_draft. Optional send=true sends immediately.",
-      inputSchema: ReplyAllSchema,
+      description: SEND_DISABLED
+        ? "Create a reply-all draft in-thread (requires threadId). Use when the user asks to 'reply all'. Creates a draft only; user sends manually from Superhuman."
+        : "Reply-all in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply all' or 'reply to all'. For drafts use superhuman_draft. Optional send=true sends immediately.",
+      inputSchema: SEND_DISABLED ? ReplyAllSchemaDraftOnly : ReplyAllSchema,
     },
     replyAllHandler
   );
@@ -118,8 +126,10 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_forward",
     {
-      description: "Forward a thread to a new recipient (requires threadId). Use ONLY when the user explicitly asks to 'forward'. Optional send=true sends immediately.",
-      inputSchema: ForwardSchema,
+      description: SEND_DISABLED
+        ? "Create a forward draft to a new recipient (requires threadId). Use when the user asks to 'forward'. Creates a draft only; user sends manually from Superhuman."
+        : "Forward a thread to a new recipient (requires threadId). Use ONLY when the user explicitly asks to 'forward'. Optional send=true sends immediately.",
+      inputSchema: SEND_DISABLED ? ForwardSchemaDraftOnly : ForwardSchema,
     },
     forwardHandler
   );

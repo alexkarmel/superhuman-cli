@@ -138,6 +138,11 @@ export const ForwardSchema = z.object({
   send: z.boolean().optional().describe("If true, send immediately. Default false. Prefer false unless user explicitly asks to send."),
 });
 
+/** Draft-only schemas (no send option); used when SEND_DISABLED so the model never sees send. */
+export const ReplySchemaDraftOnly = ReplySchema.omit({ send: true });
+export const ReplyAllSchemaDraftOnly = ReplyAllSchema.omit({ send: true });
+export const ForwardSchemaDraftOnly = ForwardSchema.omit({ send: true });
+
 /**
  * Zod schema for archiving threads
  */
@@ -333,6 +338,10 @@ function errorResult(message: string): ToolResult {
 const CONNECTION_HINT =
   "Ensure Superhuman is running (with remote debugging if using the desktop app) and you have authenticated at least one account (e.g. via the MCP installer or 'superhuman account auth').";
 
+/** When true, send is hidden from the model. Default is true (send disabled). Set SUPERHUMAN_MCP_DISABLE_SEND=0 or false to allow send. */
+export const SEND_DISABLED =
+  process.env.SUPERHUMAN_MCP_DISABLE_SEND !== "0" && process.env.SUPERHUMAN_MCP_DISABLE_SEND !== "false";
+
 /**
  * Get a ConnectionProvider for MCP tools.
  * Prefers cached tokens; falls back to CDP.
@@ -409,6 +418,12 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
  * Handler for superhuman_send tool
  */
 export async function sendHandler(args: z.infer<typeof SendSchema>): Promise<ToolResult> {
+  if (SEND_DISABLED) {
+    return errorResult(
+      "Sending is disabled. Use superhuman_draft to create drafts only; send manually from Superhuman when ready."
+    );
+  }
+
   let provider: ConnectionProvider | null = null;
 
   try {
@@ -655,6 +670,12 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
   }
 
   // Send now, or draft path unavailable: use provider reply API
+  if (send && SEND_DISABLED) {
+    return errorResult(
+      "Sending is disabled. Reply drafts are created with send=false; send manually from Superhuman when ready."
+    );
+  }
+
   let provider: ConnectionProvider | null = null;
   try {
     provider = await getMcpProvider();
@@ -716,6 +737,12 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
     }
   }
 
+  if (send && SEND_DISABLED) {
+    return errorResult(
+      "Sending is disabled. Reply-all drafts are created with send=false; send manually from Superhuman when ready."
+    );
+  }
+
   let provider: ConnectionProvider | null = null;
   try {
     provider = await getMcpProvider();
@@ -742,11 +769,17 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
  * Handler for superhuman_forward tool
  */
 export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promise<ToolResult> {
+  const send = args.send ?? false;
+  if (send && SEND_DISABLED) {
+    return errorResult(
+      "Sending is disabled. Forward drafts are created with send=false; send manually from Superhuman when ready."
+    );
+  }
+
   let provider: ConnectionProvider | null = null;
 
   try {
     provider = await getMcpProvider();
-    const send = args.send ?? false;
     const result = await forwardThread(provider, args.threadId, args.toEmail, args.body, send);
 
     if (!result.success) {
