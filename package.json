@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "bin": {
-    "superhuman": "src/cli.ts"
+    "superhuman": "src/index.ts"
   },
   "scripts": {
     "start": "bun run src/index.ts",

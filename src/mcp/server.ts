@@ -55,7 +55,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_search",
     {
-      description: "Search the Superhuman inbox. Returns a list of emails matching the search query.",
+      description: "Search the Superhuman inbox. Returns matching threads with a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_reply, etc.",
       inputSchema: SearchSchema,
     },
     searchHandler
@@ -64,7 +64,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_inbox",
     {
-      description: "List recent emails from the Superhuman inbox. Returns thread summaries with from, subject, date, and snippet.",
+      description: "List recent emails from the Superhuman inbox. Returns thread summaries and a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_archive, etc.",
       inputSchema: InboxSchema,
     },
     inboxHandler
@@ -73,7 +73,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_read",
     {
-      description: "Read a specific email thread by ID. Returns all messages in the thread with full details.",
+      description: "Read a specific email thread by threadId. Pass the threadId from superhuman_inbox or superhuman_search. Returns all messages with messageId and threadId for use with superhuman_download_attachment or reply/forward.",
       inputSchema: ReadSchema,
     },
     readHandler
@@ -127,7 +127,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_archive",
     {
-      description: "Archive one or more email threads. Removes threads from inbox without deleting them.",
+      description: "Archive one or more email threads. Pass threadIds from superhuman_inbox or superhuman_search. Removes threads from inbox without deleting.",
       inputSchema: ArchiveSchema,
     },
     archiveHandler
@@ -136,7 +136,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_delete",
     {
-      description: "Delete (trash) one or more email threads. Moves threads to the trash folder.",
+      description: "Delete (trash) one or more email threads. Pass threadIds from superhuman_inbox or superhuman_search. Moves threads to trash.",
       inputSchema: DeleteSchema,
     },
     deleteHandler
@@ -199,7 +199,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_star",
     {
-      description: "Star one or more email threads. Adds the STARRED label to mark threads as important.",
+      description: "Star one or more email threads. Pass threadIds from superhuman_inbox or superhuman_search. Adds the STARRED label.",
       inputSchema: StarSchema,
     },
     starHandler
@@ -253,7 +253,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_attachments",
     {
-      description: "List all attachments in an email thread. Returns attachment names, MIME types, and IDs needed for downloading.",
+      description: "List all attachments in an email thread. Pass threadId from superhuman_inbox or superhuman_read. Returns messageId and attachmentId for each; use those with superhuman_download_attachment.",
       inputSchema: AttachmentsSchema,
     },
     attachmentsHandler
@@ -262,7 +262,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_download_attachment",
     {
-      description: "Download an attachment from an email. Returns the file content as base64-encoded data along with size and MIME type. Use superhuman_attachments first to get the messageId and attachmentId.",
+      description: "Download an attachment from an email. Pass messageId and attachmentId from superhuman_attachments. Returns file content as base64 plus size and MIME type.",
       inputSchema: DownloadAttachmentSchema,
     },
     downloadAttachmentHandler
@@ -271,7 +271,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_calendar_list",
     {
-      description: "List calendar events from Superhuman. Returns events for a date range with details including title, time, attendees, and event ID.",
+      description: "List calendar events from Superhuman for a date range. Returns each event's id; use that id with superhuman_calendar_update or superhuman_calendar_delete.",
       inputSchema: CalendarListSchema,
     },
     calendarListHandler
@@ -316,7 +316,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_snippets",
     {
-      description: "List all snippets (reusable email templates) in Superhuman. Returns snippet names, usage stats, and previews.",
+      description: "List all snippets (reusable email templates) in Superhuman. Returns each snippet's name; use the exact name with superhuman_snippet.",
       inputSchema: SnippetsSchema,
     },
     snippetsHandler
@@ -325,7 +325,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_snippet",
     {
-      description: "Use a snippet to compose or send an email. Fuzzy-matches snippet by name, applies template variables, and creates a draft or sends immediately.",
+      description: "Use a snippet to compose or send an email. Pass the snippet name from superhuman_snippets (fuzzy match supported). Creates a draft by default or send=true to send immediately.",
       inputSchema: UseSnippetSchema,
     },
     useSnippetHandler
@@ -334,7 +334,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_ask_ai",
     {
-      description: "Ask Superhuman AI to search emails, answer questions, or compose drafts. Supports natural language queries like 'find emails about the project deadline' or 'what did John say about the budget?'. Optionally provide a thread ID to ask about a specific email thread.",
+      description: "Ask Superhuman AI to search emails, answer questions, or compose drafts. Pass a natural-language query; optionally pass thread_id (from superhuman_inbox or superhuman_read) to ask about a specific thread.",
       inputSchema: AskAISchema,
     },
     askAIHandler

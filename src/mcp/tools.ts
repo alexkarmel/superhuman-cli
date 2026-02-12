@@ -41,6 +41,7 @@ import {
   askAISearch,
   type TokenInfo,
 } from "../token-api";
+import fs from "fs";
 
 const CDP_PORT = 9333;
 
@@ -93,7 +94,7 @@ export const InboxSchema = z.object({
  * Zod schema for reading a thread
  */
 export const ReadSchema = z.object({
-  threadId: z.string().describe("The thread ID to read"),
+  threadId: z.string().describe("Thread ID from superhuman_inbox or superhuman_search"),
 });
 
 /**
@@ -112,7 +113,7 @@ export const SwitchAccountSchema = z.object({
  * Zod schema for reply to a thread
  */
 export const ReplySchema = z.object({
-  threadId: z.string().describe("Thread ID to reply to"),
+  threadId: z.string().describe("Thread ID from superhuman_inbox, superhuman_search, or superhuman_read"),
   body: z.string().describe("Reply message body"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
 });
@@ -121,7 +122,7 @@ export const ReplySchema = z.object({
  * Zod schema for reply-all to a thread
  */
 export const ReplyAllSchema = z.object({
-  threadId: z.string().describe("Thread ID to reply-all to"),
+  threadId: z.string().describe("Thread ID from superhuman_inbox, superhuman_search, or superhuman_read"),
   body: z.string().describe("Reply message body"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
 });
@@ -130,7 +131,7 @@ export const ReplyAllSchema = z.object({
  * Zod schema for forwarding a thread
  */
 export const ForwardSchema = z.object({
-  threadId: z.string().describe("Thread ID to forward"),
+  threadId: z.string().describe("Thread ID from superhuman_inbox, superhuman_search, or superhuman_read"),
   toEmail: z.string().describe("Email address to forward to"),
   body: z.string().describe("Message body to include before the forwarded content"),
   send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
@@ -140,28 +141,28 @@ export const ForwardSchema = z.object({
  * Zod schema for archiving threads
  */
 export const ArchiveSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to archive"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
 });
 
 /**
  * Zod schema for deleting threads
  */
 export const DeleteSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to delete (move to trash)"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
 });
 
 /**
  * Zod schema for marking threads as read
  */
 export const MarkReadSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to mark as read"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
 });
 
 /**
  * Zod schema for marking threads as unread
  */
 export const MarkUnreadSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to mark as unread"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
 });
 
 /**
@@ -173,37 +174,37 @@ export const LabelsSchema = z.object({});
  * Zod schema for getting labels on a thread
  */
 export const GetLabelsSchema = z.object({
-  threadId: z.string().describe("The thread ID to get labels for"),
+  threadId: z.string().describe("Thread ID from superhuman_inbox or superhuman_read"),
 });
 
 /**
  * Zod schema for adding a label to threads
  */
 export const AddLabelSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to add the label to"),
-  labelId: z.string().describe("The label ID to add"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
+  labelId: z.string().describe("Label ID from superhuman_labels"),
 });
 
 /**
  * Zod schema for removing a label from threads
  */
 export const RemoveLabelSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to remove the label from"),
-  labelId: z.string().describe("The label ID to remove"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
+  labelId: z.string().describe("Label ID from superhuman_labels or superhuman_get_labels"),
 });
 
 /**
  * Zod schema for starring threads
  */
 export const StarSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to star"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
 });
 
 /**
  * Zod schema for unstarring threads
  */
 export const UnstarSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to unstar"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_starred or superhuman_inbox"),
 });
 
 /**
@@ -217,7 +218,7 @@ export const StarredSchema = z.object({
  * Zod schema for snoozing threads
  */
 export const SnoozeSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to snooze"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_inbox or superhuman_search"),
   until: z.string().describe("When to unsnooze: preset (tomorrow, next-week, weekend, evening) or ISO datetime (e.g., 2024-02-15T14:00:00Z)"),
 });
 
@@ -225,7 +226,7 @@ export const SnoozeSchema = z.object({
  * Zod schema for unsnoozing threads
  */
 export const UnsnoozeSchema = z.object({
-  threadIds: z.array(z.string()).describe("Thread ID(s) to unsnooze"),
+  threadIds: z.array(z.string()).describe("Thread ID(s) from superhuman_snoozed or superhuman_inbox"),
 });
 
 /**
@@ -239,17 +240,17 @@ export const SnoozedSchema = z.object({
  * Zod schema for listing attachments in a thread
  */
 export const AttachmentsSchema = z.object({
-  threadId: z.string().describe("The thread ID to list attachments for"),
+  threadId: z.string().describe("Thread ID from superhuman_inbox or superhuman_read"),
 });
 
 /**
  * Zod schema for downloading an attachment
  */
 export const DownloadAttachmentSchema = z.object({
-  messageId: z.string().describe("The message ID containing the attachment"),
-  attachmentId: z.string().describe("The attachment ID to download"),
-  threadId: z.string().optional().describe("The thread ID (optional, helps with some providers)"),
-  mimeType: z.string().optional().describe("The MIME type of the attachment (optional)"),
+  messageId: z.string().describe("Message ID from superhuman_attachments"),
+  attachmentId: z.string().describe("Attachment ID from superhuman_attachments"),
+  threadId: z.string().optional().describe("Thread ID (optional; from superhuman_read or superhuman_attachments)"),
+  mimeType: z.string().optional().describe("MIME type from superhuman_attachments (optional)"),
 });
 
 /**
@@ -278,7 +279,7 @@ export const CalendarCreateSchema = z.object({
  * Zod schema for updating a calendar event
  */
 export const CalendarUpdateSchema = z.object({
-  eventId: z.string().describe("The event ID to update"),
+  eventId: z.string().describe("Event id from superhuman_calendar_list"),
   title: z.string().optional().describe("New event title/summary"),
   startTime: z.string().optional().describe("New start time as ISO datetime"),
   endTime: z.string().optional().describe("New end time as ISO datetime"),
@@ -290,7 +291,7 @@ export const CalendarUpdateSchema = z.object({
  * Zod schema for deleting a calendar event
  */
 export const CalendarDeleteSchema = z.object({
-  eventId: z.string().describe("The event ID to delete"),
+  eventId: z.string().describe("Event id from superhuman_calendar_list"),
 });
 
 /**
@@ -308,9 +309,28 @@ function successResult(text: string): ToolResult {
   return { content: [{ type: "text", text }] };
 }
 
+/** Log MCP tool errors to a file when SUPERHUMAN_MCP_LOG or SUPERHUMAN_MCP_DEBUG is set (for debugging). */
+function logMcpErrorToFile(message: string): void {
+  const logPath =
+    process.env.SUPERHUMAN_MCP_LOG ||
+    (process.env.SUPERHUMAN_MCP_DEBUG ? `${process.env.HOME ?? ""}/Library/Logs/superhuman-mcp.log` : "");
+  if (!logPath) return;
+  try {
+    const line = `[${new Date().toISOString()}] ${message}\n`;
+    fs.appendFileSync(logPath, line);
+  } catch {
+    // ignore
+  }
+}
+
 function errorResult(message: string): ToolResult {
+  logMcpErrorToFile(message);
   return { content: [{ type: "text", text: message }], isError: true };
 }
+
+/** User-facing hint when Superhuman or auth is unavailable. */
+const CONNECTION_HINT =
+  "Ensure Superhuman is running (with remote debugging if using the desktop app) and you have authenticated at least one account (e.g. via the MCP installer or 'superhuman account auth').";
 
 /**
  * Get a ConnectionProvider for MCP tools.
@@ -322,7 +342,9 @@ async function getMcpProvider(): Promise<ConnectionProvider> {
 
   const conn = await connectToSuperhuman(CDP_PORT);
   if (!conn) {
-    throw new Error("Could not connect to Superhuman. Make sure it's running with --remote-debugging-port=9333");
+    throw new Error(
+      `Could not connect to Superhuman (remote debugging on port ${CDP_PORT}). ${CONNECTION_HINT}`
+    );
   }
   return new CDPConnectionProvider(conn);
 }
@@ -433,11 +455,11 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     const resultsText = threads
       .map((t, i) => {
         const from = t.from.name || t.from.email;
-        return `${i + 1}. From: ${from}\n   Subject: ${t.subject}\n   Date: ${t.date}\n   Snippet: ${t.snippet.substring(0, 100)}...`;
+        return `${i + 1}. threadId: ${t.id}\n   From: ${from}\n   Subject: ${t.subject}\n   Date: ${t.date}\n   Snippet: ${t.snippet.substring(0, 100)}...`;
       })
       .join("\n\n");
 
-    return successResult(`Found ${threads.length} result(s) for query: "${args.query}"\n\n${resultsText}`);
+    return successResult(`Found ${threads.length} result(s) for query: "${args.query}". Use threadId with superhuman_read or superhuman_star.\n\n${resultsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to search inbox: ${message}`);
@@ -463,11 +485,11 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
     const resultsText = threads
       .map((t, i) => {
         const from = t.from.name || t.from.email;
-        return `${i + 1}. From: ${from}\n   Subject: ${t.subject}\n   Date: ${t.date}\n   Snippet: ${t.snippet.substring(0, 100)}...`;
+        return `${i + 1}. threadId: ${t.id}\n   From: ${from}\n   Subject: ${t.subject}\n   Date: ${t.date}\n   Snippet: ${t.snippet.substring(0, 100)}...`;
       })
       .join("\n\n");
 
-    return successResult(`Inbox (${threads.length} threads):\n\n${resultsText}`);
+    return successResult(`Inbox (${threads.length} threads). Use threadId with superhuman_read or superhuman_star.\n\n${resultsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list inbox: ${message}`);
@@ -495,11 +517,11 @@ export async function readHandler(args: z.infer<typeof ReadSchema>): Promise<Too
         const from = msg.from.name ? `${msg.from.name} <${msg.from.email}>` : msg.from.email;
         const to = msg.to.map(r => r.email).join(", ");
         const cc = msg.cc.length > 0 ? `\nCc: ${msg.cc.map(r => r.email).join(", ")}` : "";
-        return `--- Message ${i + 1} ---\nFrom: ${from}\nTo: ${to}${cc}\nDate: ${msg.date}\nSubject: ${msg.subject}\n\n${msg.snippet}`;
+        return `--- Message ${i + 1} ---\nmessageId: ${msg.id}\nthreadId: ${msg.threadId}\nFrom: ${from}\nTo: ${to}${cc}\nDate: ${msg.date}\nSubject: ${msg.subject}\n\n${msg.snippet}`;
       })
       .join("\n\n");
 
-    return successResult(`Thread: ${messages[0].subject}\n\n${messagesText}`);
+    return successResult(`Thread: ${messages[0].subject}\nUse messageId/threadId with superhuman_download_attachment (after superhuman_attachments) or reply/forward.\n\n${messagesText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to read thread: ${message}`);
@@ -534,10 +556,11 @@ export async function accountsHandler(_args: z.infer<typeof AccountsSchema>): Pr
       })
       .join("\n");
 
-    return successResult(`Linked accounts:\n\n${accountsText}`);
+    return successResult(`Linked accounts. Use index (e.g. 2) or email with superhuman_switch_account.\n\n${accountsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return errorResult(`Failed to list accounts: ${message}`);
+    const hint = message.includes("Could not connect") || message.includes("connect to Superhuman") ? ` ${CONNECTION_HINT}` : "";
+    return errorResult(`Failed to list accounts: ${message}.${hint}`);
   } finally {
     if (conn) await disconnect(conn);
   }
@@ -694,11 +717,11 @@ export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promi
 
   try {
     provider = await getMcpProvider();
-    const results: { threadId: string; success: boolean }[] = [];
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
 
     for (const threadId of args.threadIds) {
       const result = await archiveThread(provider, threadId);
-      results.push({ threadId, success: result.success });
+      results.push({ threadId, success: result.success, error: result.error });
     }
 
     const succeeded = results.filter((r) => r.success).length;
@@ -707,10 +730,11 @@ export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promi
     if (failed === 0) {
       return successResult(`Archived ${succeeded} thread(s) successfully`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to archive all ${failed} thread(s)`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to archive all ${failed} thread(s): ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Archived ${succeeded} thread(s), failed to archive ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Archived ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -732,11 +756,11 @@ export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise
 
   try {
     provider = await getMcpProvider();
-    const results: { threadId: string; success: boolean }[] = [];
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
 
     for (const threadId of args.threadIds) {
       const result = await deleteThread(provider, threadId);
-      results.push({ threadId, success: result.success });
+      results.push({ threadId, success: result.success, error: result.error });
     }
 
     const succeeded = results.filter((r) => r.success).length;
@@ -745,10 +769,11 @@ export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise
     if (failed === 0) {
       return successResult(`Deleted ${succeeded} thread(s) successfully`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to delete all ${failed} thread(s)`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to delete all ${failed} thread(s): ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Deleted ${succeeded} thread(s), failed to delete ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Deleted ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -770,11 +795,11 @@ export async function markReadHandler(args: z.infer<typeof MarkReadSchema>): Pro
 
   try {
     provider = await getMcpProvider();
-    const results: { threadId: string; success: boolean }[] = [];
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
 
     for (const threadId of args.threadIds) {
       const result = await markAsRead(provider, threadId);
-      results.push({ threadId, success: result.success });
+      results.push({ threadId, success: result.success, error: result.error });
     }
 
     const succeeded = results.filter((r) => r.success).length;
@@ -783,10 +808,11 @@ export async function markReadHandler(args: z.infer<typeof MarkReadSchema>): Pro
     if (failed === 0) {
       return successResult(`Marked ${succeeded} thread(s) as read`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to mark all ${failed} thread(s) as read`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to mark all ${failed} thread(s) as read: ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Marked ${succeeded} thread(s) as read, failed on ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Marked ${succeeded} thread(s) as read, failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -808,11 +834,11 @@ export async function markUnreadHandler(args: z.infer<typeof MarkUnreadSchema>):
 
   try {
     provider = await getMcpProvider();
-    const results: { threadId: string; success: boolean }[] = [];
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
 
     for (const threadId of args.threadIds) {
       const result = await markAsUnread(provider, threadId);
-      results.push({ threadId, success: result.success });
+      results.push({ threadId, success: result.success, error: result.error });
     }
 
     const succeeded = results.filter((r) => r.success).length;
@@ -821,10 +847,11 @@ export async function markUnreadHandler(args: z.infer<typeof MarkUnreadSchema>):
     if (failed === 0) {
       return successResult(`Marked ${succeeded} thread(s) as unread`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to mark all ${failed} thread(s) as unread`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to mark all ${failed} thread(s) as unread: ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Marked ${succeeded} thread(s) as unread, failed on ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Marked ${succeeded} thread(s) as unread, failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -851,11 +878,11 @@ export async function labelsHandler(_args: z.infer<typeof LabelsSchema>): Promis
     const labelsText = labels
       .map((l) => {
         const typeInfo = l.type ? ` (${l.type})` : "";
-        return `- ${l.name}${typeInfo}\n  ID: ${l.id}`;
+        return `- ${l.name}${typeInfo}\n  labelId: ${l.id}`;
       })
       .join("\n");
 
-    return successResult(`Available labels:\n\n${labelsText}`);
+    return successResult(`Available labels. Use labelId with superhuman_add_label or superhuman_remove_label.\n\n${labelsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list labels: ${message}`);
@@ -881,11 +908,11 @@ export async function getLabelsHandler(args: z.infer<typeof GetLabelsSchema>): P
     const labelsText = labels
       .map((l) => {
         const typeInfo = l.type ? ` (${l.type})` : "";
-        return `- ${l.name}${typeInfo}\n  ID: ${l.id}`;
+        return `- ${l.name}${typeInfo}\n  labelId: ${l.id}`;
       })
       .join("\n");
 
-    return successResult(`Labels on thread ${args.threadId}:\n\n${labelsText}`);
+    return successResult(`Labels on thread ${args.threadId}. Use labelId with superhuman_remove_label or superhuman_add_label.\n\n${labelsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to get thread labels: ${message}`);
@@ -906,11 +933,11 @@ export async function addLabelHandler(args: z.infer<typeof AddLabelSchema>): Pro
 
   try {
     provider = await getMcpProvider();
-    const results: { threadId: string; success: boolean }[] = [];
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
 
     for (const threadId of args.threadIds) {
       const result = await addLabel(provider, threadId, args.labelId);
-      results.push({ threadId, success: result.success });
+      results.push({ threadId, success: result.success, error: result.error });
     }
 
     const succeeded = results.filter((r) => r.success).length;
@@ -919,10 +946,11 @@ export async function addLabelHandler(args: z.infer<typeof AddLabelSchema>): Pro
     if (failed === 0) {
       return successResult(`Added label to ${succeeded} thread(s)`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to add label to all ${failed} thread(s)`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to add label to all ${failed} thread(s): ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Added label to ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Added label to ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -944,11 +972,11 @@ export async function removeLabelHandler(args: z.infer<typeof RemoveLabelSchema>
 
   try {
     provider = await getMcpProvider();
-    const results: { threadId: string; success: boolean }[] = [];
+    const results: { threadId: string; success: boolean; error?: string }[] = [];
 
     for (const threadId of args.threadIds) {
       const result = await removeLabel(provider, threadId, args.labelId);
-      results.push({ threadId, success: result.success });
+      results.push({ threadId, success: result.success, error: result.error });
     }
 
     const succeeded = results.filter((r) => r.success).length;
@@ -957,10 +985,11 @@ export async function removeLabelHandler(args: z.infer<typeof RemoveLabelSchema>
     if (failed === 0) {
       return successResult(`Removed label from ${succeeded} thread(s)`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to remove label from all ${failed} thread(s)`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to remove label from all ${failed} thread(s): ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Removed label from ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Removed label from ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -995,10 +1024,11 @@ export async function starHandler(args: z.infer<typeof StarSchema>): Promise<Too
     if (failed === 0) {
       return successResult(`Starred ${succeeded} thread(s)`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to star all ${failed} thread(s)`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to star all ${failed} thread(s): ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Starred ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Starred ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -1033,10 +1063,11 @@ export async function unstarHandler(args: z.infer<typeof UnstarSchema>): Promise
     if (failed === 0) {
       return successResult(`Unstarred ${succeeded} thread(s)`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to unstar all ${failed} thread(s)`);
+      const details = results.map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return errorResult(`Failed to unstar all ${failed} thread(s): ${details}`);
     } else {
-      const failedIds = results.filter((r) => !r.success).map((r) => r.threadId).join(", ");
-      return successResult(`Unstarred ${succeeded} thread(s), failed on ${failed}: ${failedIds}`);
+      const failedDetails = results.filter((r) => !r.success).map((r) => `${r.threadId}${r.error ? ` (${r.error})` : ""}`).join("; ");
+      return successResult(`Unstarred ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -1062,10 +1093,10 @@ export async function starredHandler(args: z.infer<typeof StarredSchema>): Promi
     }
 
     const threadsText = threads
-      .map((t, i) => `${i + 1}. Thread ID: ${t.id}`)
+      .map((t, i) => `${i + 1}. threadId: ${t.id}`)
       .join("\n");
 
-    return successResult(`Starred threads (${threads.length}):\n\n${threadsText}`);
+    return successResult(`Starred threads (${threads.length}). Use threadId with superhuman_unstar, superhuman_read, superhuman_archive, etc.\n\n${threadsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list starred threads: ${message}`);
@@ -1102,10 +1133,17 @@ export async function snoozeHandler(args: z.infer<typeof SnoozeSchema>): Promise
     if (failed === 0) {
       return successResult(`Snoozed ${succeeded} thread(s) until ${snoozeTime.toISOString()}`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to snooze all ${failed} thread(s)`);
+      const details = args.threadIds
+        .map((id, i) => `${id}${results[i].error ? ` (${results[i].error})` : ""}`)
+        .filter((_, i) => !results[i].success)
+        .join("; ");
+      return errorResult(`Failed to snooze all ${failed} thread(s): ${details}`);
     } else {
-      const failedThreads = args.threadIds.filter((_, i) => !results[i].success).join(", ");
-      return successResult(`Snoozed ${succeeded} thread(s), failed on ${failed}: ${failedThreads}`);
+      const failedDetails = args.threadIds
+        .map((id, i) => (!results[i].success ? `${id}${results[i].error ? ` (${results[i].error})` : ""}` : ""))
+        .filter(Boolean)
+        .join("; ");
+      return successResult(`Snoozed ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -1136,10 +1174,17 @@ export async function unsnoozeHandler(args: z.infer<typeof UnsnoozeSchema>): Pro
     if (failed === 0) {
       return successResult(`Unsnoozed ${succeeded} thread(s)`);
     } else if (succeeded === 0) {
-      return errorResult(`Failed to unsnooze all ${failed} thread(s)`);
+      const details = args.threadIds
+        .map((id, i) => `${id}${results[i].error ? ` (${results[i].error})` : ""}`)
+        .filter((_, i) => !results[i].success)
+        .join("; ");
+      return errorResult(`Failed to unsnooze all ${failed} thread(s): ${details}`);
     } else {
-      const failedThreads = args.threadIds.filter((_, i) => !results[i].success).join(", ");
-      return successResult(`Unsnoozed ${succeeded} thread(s), failed on ${failed}: ${failedThreads}`);
+      const failedDetails = args.threadIds
+        .map((id, i) => (!results[i].success ? `${id}${results[i].error ? ` (${results[i].error})` : ""}` : ""))
+        .filter(Boolean)
+        .join("; ");
+      return successResult(`Unsnoozed ${succeeded} thread(s), failed on ${failed}: ${failedDetails}`);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -1168,11 +1213,11 @@ export async function snoozedHandler(args: z.infer<typeof SnoozedSchema>): Promi
     const threadsText = threads
       .map((t, i) => {
         const untilStr = t.snoozeUntil ? ` (until ${t.snoozeUntil})` : "";
-        return `${i + 1}. Thread ID: ${t.id}${untilStr}`;
+        return `${i + 1}. threadId: ${t.id}${untilStr}`;
       })
       .join("\n");
 
-    return successResult(`Snoozed threads (${threads.length}):\n\n${threadsText}`);
+    return successResult(`Snoozed threads (${threads.length}). Use threadId with superhuman_unsnooze, superhuman_read, etc.\n\n${threadsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list snoozed threads: ${message}`);
@@ -1197,11 +1242,11 @@ export async function attachmentsHandler(args: z.infer<typeof AttachmentsSchema>
 
     const attachmentsText = attachments
       .map((att, i) => {
-        return `${i + 1}. ${att.name}\n   MIME Type: ${att.mimeType}\n   Attachment ID: ${att.attachmentId}\n   Message ID: ${att.messageId}`;
+        return `${i + 1}. ${att.name}\n   mimeType: ${att.mimeType}\n   attachmentId: ${att.attachmentId}\n   messageId: ${att.messageId}`;
       })
       .join("\n\n");
 
-    return successResult(`Attachments in thread ${args.threadId} (${attachments.length}):\n\n${attachmentsText}`);
+    return successResult(`Attachments in thread ${args.threadId} (${attachments.length}). Use messageId and attachmentId with superhuman_download_attachment.\n\n${attachmentsText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list attachments: ${message}`);
@@ -1293,7 +1338,8 @@ export async function calendarListHandler(args: z.infer<typeof CalendarListSchem
 
     const events = await listEvents(provider, { timeMin, timeMax });
 
-    return successResult(JSON.stringify(events, null, 2));
+    const intro = "Calendar events. Use each event's 'id' with superhuman_calendar_update or superhuman_calendar_delete.\n\n";
+    return successResult(intro + JSON.stringify(events, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list calendar events: ${message}`);
@@ -1440,7 +1486,7 @@ export async function calendarFreeBusyHandler(args: z.infer<typeof CalendarFreeB
 export const SnippetsSchema = z.object({});
 
 export const UseSnippetSchema = z.object({
-  name: z.string().describe("Snippet name to search for (fuzzy match)"),
+  name: z.string().describe("Exact snippet name from superhuman_snippets (fuzzy match supported)"),
   to: z.string().optional().describe("Recipient email address (overrides snippet default)"),
   cc: z.string().optional().describe("CC recipient email (overrides snippet default)"),
   bcc: z.string().optional().describe("BCC recipient email (overrides snippet default)"),
@@ -1486,11 +1532,11 @@ export async function snippetsHandler(_args: z.infer<typeof SnippetsSchema>): Pr
     const snippetsList = snippets
       .map((s) => {
         const lastUsed = s.lastSentAt ? new Date(s.lastSentAt).toLocaleDateString() : "never";
-        return `- ${s.name}\n  Sends: ${s.sends} | Last used: ${lastUsed}\n  Subject: ${s.subject || "(none)"}\n  Preview: ${s.snippet || "(empty)"}`;
+        return `- name: ${s.name}\n  Sends: ${s.sends} | Last used: ${lastUsed}\n  Subject: ${s.subject || "(none)"}\n  Preview: ${s.snippet || "(empty)"}`;
       })
       .join("\n\n");
 
-    return successResult(`Snippets (${snippets.length}):\n\n${snippetsList}`);
+    return successResult(`Snippets (${snippets.length}). Use the exact 'name' with superhuman_snippet.\n\n${snippetsList}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list snippets: ${message}`);
@@ -1576,16 +1622,18 @@ export async function useSnippetHandler(args: z.infer<typeof UseSnippetSchema>):
 
 // ========== AI Search ==========
 
-export const AskAISchema = {
+export const AskAISchema = z.object({
   query: z.string().describe("Natural language query — search emails, ask questions, compose drafts, etc."),
-  thread_id: z.string().optional().describe("Optional thread ID to ask about a specific email thread"),
-};
+  thread_id: z.string().optional().describe("Optional thread ID (from superhuman_inbox or superhuman_read) to ask about a specific email thread"),
+});
 
-export async function askAIHandler(args: z.infer<z.ZodObject<typeof AskAISchema>>): Promise<ToolResult> {
+export async function askAIHandler(args: z.infer<typeof AskAISchema>): Promise<ToolResult> {
   try {
     const token = await resolveSuperhumanToken();
     if (!token || !token.idToken) {
-      return errorResult("No Superhuman credentials found. Run 'superhuman account auth' first.");
+      return errorResult(
+        "No Superhuman credentials found. Log in to Superhuman in the app and ensure the MCP setup has run (or run 'superhuman account auth' from the CLI). " + CONNECTION_HINT
+      );
     }
 
     const result = await askAISearch(
