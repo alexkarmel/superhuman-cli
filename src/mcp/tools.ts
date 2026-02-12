@@ -39,6 +39,7 @@ import {
   getCachedAccounts,
   hasCachedSuperhumanCredentials,
   askAISearch,
+  getThreadInfoDirect,
   type TokenInfo,
 } from "../token-api";
 import fs from "fs";
@@ -622,14 +623,41 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
 }
 
 /**
- * Handler for superhuman_reply tool
+ * Handler for superhuman_reply tool.
+ * When send=false, creates a draft via Superhuman backend (same as superhuman_draft) so it appears in the drafts list.
+ * When send=true, sends the reply via provider API.
  */
 export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<ToolResult> {
-  let provider: ConnectionProvider | null = null;
+  const send = args.send ?? false;
 
+  // When creating a draft (send=false), use Superhuman backend so the draft appears in the inbox/drafts
+  if (!send) {
+    const token = await resolveSuperhumanToken();
+    if (token?.userId && token?.idToken) {
+      const threadInfo = await getThreadInfoDirect(token, args.threadId);
+      if (threadInfo?.from) {
+        const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+        const subject = threadInfo.subject.startsWith("Re:")
+          ? threadInfo.subject
+          : `Re: ${threadInfo.subject}`;
+        const result = await createDraftWithUserInfo(userInfo, {
+          to: [threadInfo.from],
+          subject,
+          body: textToHtml(args.body),
+        });
+        if (result.success) {
+          return successResult(
+            `Reply draft created for thread ${args.threadId} (visible in Superhuman drafts).\nTo: ${threadInfo.from}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+          );
+        }
+      }
+    }
+  }
+
+  // Send now, or draft path unavailable: use provider reply API
+  let provider: ConnectionProvider | null = null;
   try {
     provider = await getMcpProvider();
-    const send = args.send ?? false;
     const result = await replyToThread(provider, args.threadId, args.body, send);
 
     if (!result.success) {
@@ -639,7 +667,9 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
     if (send) {
       return successResult(`Reply sent successfully to thread ${args.threadId}`);
     } else {
-      return successResult(`Reply draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}`);
+      return successResult(
+        `Reply draft created for thread ${args.threadId}${result.draftId ? `\nDraft ID: ${result.draftId}` : ""}\n(If you don't see it in Superhuman, the app may show provider drafts only when you open the thread.)`
+      );
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -650,14 +680,45 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
 }
 
 /**
- * Handler for superhuman_reply_all tool
+ * Handler for superhuman_reply_all tool.
+ * When send=false, creates a draft via Superhuman backend so it appears in the drafts list.
  */
 export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Promise<ToolResult> {
-  let provider: ConnectionProvider | null = null;
+  const send = args.send ?? false;
 
+  if (!send) {
+    const token = await resolveSuperhumanToken();
+    if (token?.userId && token?.idToken) {
+      const threadInfo = await getThreadInfoDirect(token, args.threadId);
+      if (threadInfo?.from) {
+        const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+        const subject = threadInfo.subject.startsWith("Re:")
+          ? threadInfo.subject
+          : `Re: ${threadInfo.subject}`;
+        const toSet = new Set<string>([threadInfo.from]);
+        for (const e of threadInfo.to) {
+          if (e !== token.email) toSet.add(e);
+        }
+        const to = [...toSet];
+        const cc = (threadInfo.cc || []).filter((e) => e !== token.email);
+        const result = await createDraftWithUserInfo(userInfo, {
+          to,
+          cc: cc.length > 0 ? cc : undefined,
+          subject,
+          body: textToHtml(args.body),
+        });
+        if (result.success) {
+          return successResult(
+            `Reply-all draft created for thread ${args.threadId} (visible in Superhuman drafts).\nTo: ${to.join(", ")}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+          );
+        }
+      }
+    }
+  }
+
+  let provider: ConnectionProvider | null = null;
   try {
     provider = await getMcpProvider();
-    const send = args.send ?? false;
     const result = await replyAllToThread(provider, args.threadId, args.body, send);
 
     if (!result.success) {
