@@ -37,7 +37,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_draft",
     {
-      description: "Create an email draft via Gmail/Outlook API using cached OAuth tokens.",
+      description: "Create an email draft (compose new email). Use this whenever the user says 'draft', 'create a draft', 'draft a response', 'write a draft', or 'compose' — it creates a new draft that appears in the drafts folder. Requires to, subject, and body. Do NOT use superhuman_reply for creating drafts; use this tool so the user sees drafts in their inbox.",
       inputSchema: DraftSchema,
     },
     draftHandler
@@ -46,7 +46,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_send",
     {
-      description: "Send an email via Gmail/Outlook API using cached OAuth tokens.",
+      description: "Send an email immediately. Use ONLY when the user explicitly asks to send or 'send now'. Do not use for creating drafts; use superhuman_draft for drafts.",
       inputSchema: SendSchema,
     },
     sendHandler
@@ -100,7 +100,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_reply",
     {
-      description: "Reply to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to the sender of the last message in the thread.",
+      description: "Reply in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply' or 'respond to this thread'. For 'create a draft', 'draft a response', or 'write a draft' use superhuman_draft instead — reply does not create the same visible drafts. Optional send=true sends immediately; default is draft in thread.",
       inputSchema: ReplySchema,
     },
     replyHandler
@@ -109,7 +109,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_reply_all",
     {
-      description: "Reply-all to an email thread. Creates a draft by default, or sends immediately with send=true. The reply is addressed to all recipients of the last message (excluding yourself).",
+      description: "Reply-all in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply all' or 'reply to all'. For drafts use superhuman_draft. Optional send=true sends immediately.",
       inputSchema: ReplyAllSchema,
     },
     replyAllHandler
@@ -118,7 +118,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_forward",
     {
-      description: "Forward an email thread to a new recipient. Creates a draft by default, or sends immediately with send=true. Includes the original message with forwarding headers.",
+      description: "Forward a thread to a new recipient (requires threadId). Use ONLY when the user explicitly asks to 'forward'. Optional send=true sends immediately.",
       inputSchema: ForwardSchema,
     },
     forwardHandler

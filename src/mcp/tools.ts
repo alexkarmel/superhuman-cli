@@ -110,31 +110,31 @@ export const SwitchAccountSchema = z.object({
 });
 
 /**
- * Zod schema for reply to a thread
+ * Zod schema for reply to a thread. Use only when user explicitly asks to "reply"; for "draft a response" use DraftSchema and superhuman_draft.
  */
 export const ReplySchema = z.object({
   threadId: z.string().describe("Thread ID from superhuman_inbox, superhuman_search, or superhuman_read"),
   body: z.string().describe("Reply message body"),
-  send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
+  send: z.boolean().optional().describe("If true, send immediately. Default false. Prefer false unless user explicitly asks to send."),
 });
 
 /**
- * Zod schema for reply-all to a thread
+ * Zod schema for reply-all to a thread. Use only when user explicitly asks to "reply all".
  */
 export const ReplyAllSchema = z.object({
   threadId: z.string().describe("Thread ID from superhuman_inbox, superhuman_search, or superhuman_read"),
   body: z.string().describe("Reply message body"),
-  send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
+  send: z.boolean().optional().describe("If true, send immediately. Default false. Prefer false unless user explicitly asks to send."),
 });
 
 /**
- * Zod schema for forwarding a thread
+ * Zod schema for forwarding a thread. Use only when user explicitly asks to "forward".
  */
 export const ForwardSchema = z.object({
   threadId: z.string().describe("Thread ID from superhuman_inbox, superhuman_search, or superhuman_read"),
   toEmail: z.string().describe("Email address to forward to"),
   body: z.string().describe("Message body to include before the forwarded content"),
-  send: z.boolean().optional().describe("Send immediately instead of creating draft (default: false)"),
+  send: z.boolean().optional().describe("If true, send immediately. Default false. Prefer false unless user explicitly asks to send."),
 });
 
 /**
