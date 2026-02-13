@@ -96,8 +96,8 @@ function createMcpServer(): McpServer {
     "superhuman_reply",
     {
       description: SEND_DISABLED
-        ? "Create a reply draft in the thread (requires threadId). Use for ANY reply or 'draft a response' to an email — this is the only way to create reply drafts; the draft appears in the thread with the conversation above it. Get threadId from superhuman_inbox or superhuman_read. User sends manually from Superhuman."
-        : "Reply or draft a response in the thread (requires threadId). Use for reply, respond, or draft a response — this is the only way to create reply drafts; the draft appears in the thread with the conversation above it. Get threadId from superhuman_inbox or superhuman_read. Optional send=true sends immediately; default is draft in thread.",
+        ? "Reply to ONE person only (requires threadId). Use ONLY when the thread has a single other participant and the user explicitly wants to reply to that one person. For threads with multiple people, or when the user says 'reply in this thread', 'reply to everyone', 'respond to the thread', or 'reply all', use superhuman_reply_all instead. Draft appears in the thread. User sends manually from Superhuman."
+        : "Reply to one person only (requires threadId). Use ONLY for 1:1 threads when replying to that single person. For multi-person threads or 'reply in this thread' / 'reply all', use superhuman_reply_all. Optional send=true sends immediately; default is draft in thread.",
       inputSchema: SEND_DISABLED ? ReplySchemaDraftOnly : ReplySchema,
     },
     replyHandler
@@ -107,8 +107,8 @@ function createMcpServer(): McpServer {
     "superhuman_reply_all",
     {
       description: SEND_DISABLED
-        ? "Create a reply-all draft in the thread (requires threadId). Use when the user asks to 'reply all'. Recipients are collected from all messages in the thread so everyone on the thread is included. Draft appears in the thread with the conversation above it. User sends manually from Superhuman."
-        : "Reply-all in-thread (requires threadId). Use when the user asks to 'reply all'. Recipients are collected from all messages in the thread. Draft appears in the thread with the conversation above it. Optional send=true sends immediately.",
+        ? "Reply to everyone on the thread (requires threadId). Use when the thread has multiple participants, or the user says 'reply in this thread', 'reply all', 'reply to everyone', 'respond to the thread', or 'draft a response' in a group thread. Prefer this over superhuman_reply whenever more than one other person is on the thread. Recipients are collected from all messages so everyone is included. Draft appears in the thread. User sends manually from Superhuman."
+        : "Reply to everyone on the thread (requires threadId). Use when the thread has multiple people, or the user says 'reply in this thread', 'reply all', 'reply to everyone'. Prefer over superhuman_reply for any multi-person thread. Recipients from all messages. Draft appears in the thread. Optional send=true sends immediately.",
       inputSchema: SEND_DISABLED ? ReplyAllSchemaDraftOnly : ReplyAllSchema,
     },
     replyAllHandler

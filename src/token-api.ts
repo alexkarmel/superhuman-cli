@@ -3608,6 +3608,29 @@ export async function getThreadReplyAllRecipients(
   return { to, cc: [] };
 }
 
+/**
+ * Get the single recipient for a "reply" (not reply-all): the sender of the most recent
+ * message in the thread that is NOT from the current user. If the last message is from
+ * the current user (e.g. they sent the last email), we reply to the previous sender
+ * instead of replying to ourselves.
+ *
+ * @returns Email address to reply to, or null if thread empty or no other participant
+ */
+export async function getReplyToRecipient(
+  token: TokenInfo,
+  threadId: string
+): Promise<string | null> {
+  const messages = await getThreadMessages(token, threadId);
+  if (messages.length === 0) return null;
+  const currentEmail = (token.email || "").toLowerCase();
+  // Messages are oldest-first; walk from end to find most recent message not from me
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const from = messages[i].from?.email;
+    if (from && from.toLowerCase() !== currentEmail) return from;
+  }
+  return null;
+}
+
 const MSGRAPH_THREAD_MESSAGES_MAX = 500;
 
 async function getThreadMessagesMsGraph(

@@ -42,6 +42,7 @@ import {
   getThreadInfoDirect,
   getThreadMessages,
   getThreadReplyAllRecipients,
+  getReplyToRecipient,
   type TokenInfo,
 } from "../token-api";
 import fs from "fs";
@@ -492,7 +493,12 @@ export async function readHandler(args: z.infer<typeof ReadSchema>): Promise<Too
       })
       .join("\n\n");
 
-    return successResult(`Thread: ${messages[0].subject}\nUse messageId/threadId with superhuman_download_attachment (after superhuman_attachments) or reply/forward.\n\n${messagesText}`);
+    const allEmails = messages.flatMap((m) =>
+      [m.from?.email, ...m.to.map((r) => r.email), ...m.cc.map((r) => r.email)].filter((e): e is string => Boolean(e))
+    );
+    const participantCount = new Set(allEmails).size;
+    const replyHint = participantCount > 2 ? " For replies in this thread use superhuman_reply_all (multiple participants)." : "";
+    return successResult(`Thread: ${messages[0].subject}\nUse messageId/threadId with superhuman_download_attachment (after superhuman_attachments), superhuman_reply_all, or superhuman_forward.${replyHint}\n\n${messagesText}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to read thread: ${message}`);
@@ -614,6 +620,13 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
         `Could not load thread ${args.threadId}. The draft must be created via Superhuman so it appears in your inbox; check the thread exists and try again.`
       );
     }
+    // Single reply: reply to the most recent *other* person (never to ourselves)
+    const replyTo = await getReplyToRecipient(token, args.threadId) ?? threadInfo.from;
+    if (replyTo.toLowerCase() === (token.email || "").toLowerCase()) {
+      return errorResult(
+        "The last message in this thread is from you; there is no single person to reply to. Use superhuman_reply_all to reply to everyone on the thread."
+      );
+    }
     const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
     const subject = threadInfo.subject.startsWith("Re:")
       ? threadInfo.subject
@@ -623,13 +636,13 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
       inReplyToThreadId: args.threadId,
       inReplyToRfc822Id: threadInfo.messageId ?? undefined,
       references: threadInfo.references?.length ? threadInfo.references : undefined,
-      to: [threadInfo.from],
+      to: [replyTo],
       subject,
       body: textToHtml(args.body),
     });
     if (result.success) {
       return successResult(
-        `Reply draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${threadInfo.from}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+        `Reply draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${replyTo}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
       );
     }
     return errorResult(
