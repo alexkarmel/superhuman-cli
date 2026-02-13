@@ -315,11 +315,10 @@ bun src/index.ts --mcp
 | `superhuman_inbox` | List recent emails from inbox |
 | `superhuman_search` | Search emails |
 | `superhuman_read` | Read a thread |
-| `superhuman_draft` | Create an email draft |
 | `superhuman_send` | Send an email |
-| `superhuman_reply` | Reply to a thread |
-| `superhuman_reply_all` | Reply-all to a thread |
-| `superhuman_forward` | Forward a thread |
+| `superhuman_reply` | Reply or draft a response (draft appears in thread with conversation above it) |
+| `superhuman_reply_all` | Reply-all (draft in thread) |
+| `superhuman_forward` | Forward (draft in thread) |
 | `superhuman_archive` | Archive thread(s) |
 | `superhuman_delete` | Delete thread(s) |
 | `superhuman_mark_read` | Mark thread(s) as read |
