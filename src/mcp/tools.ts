@@ -74,7 +74,15 @@ export const EmailSchema = z.object({
   bcc: z.string().optional().describe("BCC recipient email address (optional)"),
 });
 
-export const DraftSchema = EmailSchema;
+/** Draft: either (to + subject + body) for new email, or (threadId + body) for reply draft in-thread. */
+export const DraftSchema = z.object({
+  to: z.string().optional().describe("Recipient email (required for new email; omit when threadId is set)"),
+  subject: z.string().optional().describe("Subject (required for new email; omit when threadId is set, we use Re: thread subject)"),
+  body: z.string().describe("Email body content (plain text or HTML)"),
+  cc: z.string().optional().describe("CC (optional)"),
+  bcc: z.string().optional().describe("BCC (optional)"),
+  threadId: z.string().optional().describe("Thread ID from superhuman_inbox/superhuman_read. When set, draft is created in this thread so the user sees the conversation above the draft; only body is required."),
+});
 export const SendSchema = EmailSchema;
 
 /**
@@ -116,7 +124,7 @@ export const SwitchAccountSchema = z.object({
 });
 
 /**
- * Zod schema for reply to a thread. Use only when user explicitly asks to "reply"; for "draft a response" use DraftSchema and superhuman_draft.
+ * Zod schema for reply to a thread. Use for "reply" or "respond"; draft appears in thread with conversation above it.
  */
 export const ReplySchema = z.object({
   threadId: z.string().describe("Thread ID from superhuman_inbox, superhuman_search, or superhuman_read"),
@@ -365,26 +373,69 @@ async function getMcpProvider(): Promise<ConnectionProvider> {
 }
 
 /**
- * Handler for superhuman_draft tool
+ * Handler for superhuman_draft tool.
+ * When threadId is set, creates a reply draft in-thread so the user sees the conversation above the draft.
  */
 export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<ToolResult> {
   try {
-    // Try Superhuman native API first (no CDP needed)
     const token = await resolveSuperhumanToken();
-    if (token) {
+
+    // In-thread reply draft: threadId + body (so draft appears with previous emails above it)
+    if (args.threadId) {
+      if (!token?.userId || !token?.idToken) {
+        return errorResult(
+          "Drafts in a thread require Superhuman credentials. Run account auth (or ensure the credential sync has run), then try again."
+        );
+      }
+      const threadInfo = await getThreadInfoDirect(token, args.threadId);
+      if (!threadInfo?.from) {
+        return errorResult(
+          `Could not load thread ${args.threadId}. The draft must be created in the thread so you see the conversation above it; check the thread exists and try again.`
+        );
+      }
+      const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+      const subject = threadInfo.subject.startsWith("Re:")
+        ? threadInfo.subject
+        : `Re: ${threadInfo.subject}`;
+      const result = await createDraftWithUserInfo(userInfo, {
+        action: "reply",
+        inReplyToThreadId: args.threadId,
+        inReplyToRfc822Id: threadInfo.messageId ?? undefined,
+        references: threadInfo.references?.length ? threadInfo.references : undefined,
+        labelIds: ["DRAFT", "INBOX"],
+        to: [threadInfo.from],
+        subject,
+        body: textToHtml(args.body),
+      });
+      if (result.success) {
+        return successResult(
+          `Reply draft created in thread ${args.threadId} (you'll see the conversation above the draft in Superhuman).\nTo: ${threadInfo.from}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+        );
+      }
+      return errorResult(`Failed to create draft in thread: ${result.error}`);
+    }
+
+    // New email (compose): to, subject, body required
+    const toAddr = args.to;
+    const subjectLine = args.subject;
+    if (!toAddr || !subjectLine) {
+      return errorResult("For a new email draft, provide to, subject, and body. For a reply draft in a thread, provide threadId and body.");
+    }
+
+    if (token?.userId && token?.email && token?.idToken) {
       const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
       const bodyHtml = textToHtml(args.body);
       const result = await createDraftWithUserInfo(userInfo, {
-        to: [args.to],
+        to: [toAddr],
         cc: args.cc ? [args.cc] : undefined,
         bcc: args.bcc ? [args.bcc] : undefined,
-        subject: args.subject,
+        subject: subjectLine,
         body: bodyHtml,
       });
 
       if (result.success) {
         return successResult(
-          `Draft created successfully.\nTo: ${args.to}\nSubject: ${args.subject}\nDraft ID: ${result.draftId || "(unknown)"}\nAccount: ${token.email}`
+          `Draft created successfully.\nTo: ${toAddr}\nSubject: ${subjectLine}\nDraft ID: ${result.draftId || "(unknown)"}\nAccount: ${token.email}`
         );
       } else {
         return errorResult(`Failed to create draft: ${result.error}`);
@@ -396,16 +447,16 @@ export async function draftHandler(args: z.infer<typeof DraftSchema>): Promise<T
     try {
       const bodyHtml = textToHtml(args.body);
       const result = await createDraftViaProvider(provider, {
-        to: [args.to],
+        to: [toAddr],
         cc: args.cc ? [args.cc] : undefined,
         bcc: args.bcc ? [args.bcc] : undefined,
-        subject: args.subject,
+        subject: subjectLine,
         body: bodyHtml,
       });
 
       if (result.success) {
         return successResult(
-          `Draft created successfully.\nTo: ${args.to}\nSubject: ${args.subject}\nDraft ID: ${result.draftId || "(unknown)"}`
+          `Draft created successfully.\nTo: ${toAddr}\nSubject: ${subjectLine}\nDraft ID: ${result.draftId || "(unknown)"}`
         );
       } else {
         return errorResult(`Failed to create draft: ${result.error}`);

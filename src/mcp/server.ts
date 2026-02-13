@@ -39,7 +39,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_draft",
     {
-      description: "Create an email draft (compose new email). Use this whenever the user says 'draft', 'create a draft', 'draft a response', 'write a draft', or 'compose' — it creates a new draft that appears in the drafts folder. Requires to, subject, and body. Do NOT use superhuman_reply for creating drafts; use this tool so the user sees drafts in their inbox.",
+      description: "Create an email draft. For a NEW email: provide to, subject, and body. For a REPLY draft so the user sees the thread above the draft (no confusing standalone draft): provide threadId (from superhuman_inbox/superhuman_read) and body — the draft will appear in that thread in Superhuman. Prefer superhuman_reply when the user says 'reply' or 'respond'; use superhuman_draft with threadId when they say 'draft a response' and you want the draft in the thread.",
       inputSchema: DraftSchema,
     },
     draftHandler
@@ -105,8 +105,8 @@ function createMcpServer(): McpServer {
     "superhuman_reply",
     {
       description: SEND_DISABLED
-        ? "Create a reply draft in-thread for a specific email (requires threadId). Use when the user asks to 'reply' or 'respond to this thread'. Creates a draft only; user sends manually from Superhuman."
-        : "Reply in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply' or 'respond to this thread'. For 'create a draft', 'draft a response', or 'write a draft' use superhuman_draft instead — reply does not create the same visible drafts. Optional send=true sends immediately; default is draft in thread.",
+        ? "Create a reply draft in the thread (requires threadId). Use when the user asks to 'reply' or 'respond to this thread'. The draft appears in Superhuman with the conversation above it so they see what they're replying to. User sends manually from Superhuman."
+        : "Reply in-thread (requires threadId). Use when the user asks to 'reply' or 'respond to this thread'. The draft appears in the thread with the conversation above it. Optional send=true sends immediately; default is draft in thread.",
       inputSchema: SEND_DISABLED ? ReplySchemaDraftOnly : ReplySchema,
     },
     replyHandler
@@ -116,8 +116,8 @@ function createMcpServer(): McpServer {
     "superhuman_reply_all",
     {
       description: SEND_DISABLED
-        ? "Create a reply-all draft in-thread (requires threadId). Use when the user asks to 'reply all'. Creates a draft only; user sends manually from Superhuman."
-        : "Reply-all in-thread to a specific email (requires threadId). Use ONLY when the user explicitly asks to 'reply all' or 'reply to all'. For drafts use superhuman_draft. Optional send=true sends immediately.",
+        ? "Create a reply-all draft in the thread (requires threadId). Use when the user asks to 'reply all'. The draft appears in the thread with the conversation above it. User sends manually from Superhuman."
+        : "Reply-all in-thread (requires threadId). Use when the user asks to 'reply all'. The draft appears in the thread with the conversation above it. Optional send=true sends immediately.",
       inputSchema: SEND_DISABLED ? ReplyAllSchemaDraftOnly : ReplyAllSchema,
     },
     replyAllHandler
@@ -127,8 +127,8 @@ function createMcpServer(): McpServer {
     "superhuman_forward",
     {
       description: SEND_DISABLED
-        ? "Create a forward draft to a new recipient (requires threadId). Use when the user asks to 'forward'. Creates a draft only; user sends manually from Superhuman."
-        : "Forward a thread to a new recipient (requires threadId). Use ONLY when the user explicitly asks to 'forward'. Optional send=true sends immediately.",
+        ? "Create a forward draft (requires threadId and toEmail). Use when the user asks to 'forward'. The draft appears in the thread with the conversation above it. User sends manually from Superhuman."
+        : "Forward a thread (requires threadId and toEmail). The draft appears in the thread with the conversation above it. Optional send=true sends immediately.",
       inputSchema: SEND_DISABLED ? ForwardSchemaDraftOnly : ForwardSchema,
     },
     forwardHandler
