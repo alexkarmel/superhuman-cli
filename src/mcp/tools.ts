@@ -40,6 +40,7 @@ import {
   hasCachedSuperhumanCredentials,
   askAISearch,
   getThreadInfoDirect,
+  getThreadMessages,
   type TokenInfo,
 } from "../token-api";
 import fs from "fs";
@@ -85,6 +86,7 @@ const INBOX_SEARCH_MAX_LIMIT = 5000;
 export const SearchSchema = z.object({
   query: z.string().describe("Search query string (e.g. 'after:2025/2/12' for date, or 'from:name')"),
   limit: z.number().optional().describe("Maximum number of threads to return (default: 500). Backend paginates automatically; use up to 5000 to get all matching emails."),
+  includeDone: z.boolean().optional().describe("If true, search all mail including archived/done. Use when the user asks to find archived emails or 'search everywhere'."),
 });
 
 /**
@@ -465,7 +467,11 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     provider = await getMcpProvider();
     const limit = Math.min(args.limit ?? 500, INBOX_SEARCH_MAX_LIMIT);
 
-    const threads = await searchInbox(provider, { query: args.query, limit });
+    const threads = await searchInbox(provider, {
+      query: args.query,
+      limit,
+      includeDone: args.includeDone ?? false,
+    });
 
     if (threads.length === 0) {
       return successResult(`No results found for query: "${args.query}"`);
@@ -649,35 +655,44 @@ export async function switchAccountHandler(args: z.infer<typeof SwitchAccountSch
 export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<ToolResult> {
   const send = args.send ?? false;
 
-  // When creating a draft (send=false), use Superhuman backend so the draft appears in the inbox/drafts
+  // When creating a draft (send=false), use Superhuman backend only so the draft appears in Superhuman inbox and thread
   if (!send) {
     const token = await resolveSuperhumanToken();
-    if (token?.userId && token?.idToken) {
-      const threadInfo = await getThreadInfoDirect(token, args.threadId);
-      if (threadInfo?.from) {
-        const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
-        const subject = threadInfo.subject.startsWith("Re:")
-          ? threadInfo.subject
-          : `Re: ${threadInfo.subject}`;
-        const result = await createDraftWithUserInfo(userInfo, {
-          action: "reply",
-          inReplyToThreadId: args.threadId,
-          inReplyToRfc822Id: threadInfo.messageId ?? undefined,
-          references: threadInfo.references?.length ? threadInfo.references : undefined,
-          to: [threadInfo.from],
-          subject,
-          body: textToHtml(args.body),
-        });
-        if (result.success) {
-          return successResult(
-            `Reply draft created for thread ${args.threadId} (visible in Superhuman; open the thread to see it with the original email).\nTo: ${threadInfo.from}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
-          );
-        }
-      }
+    if (!token?.userId || !token?.idToken) {
+      return errorResult(
+        "Drafts must be created with Superhuman credentials to appear in the Superhuman inbox. Run 'superhuman account auth' in Terminal (with Superhuman running), then try again."
+      );
     }
+    const threadInfo = await getThreadInfoDirect(token, args.threadId);
+    if (!threadInfo?.from) {
+      return errorResult(
+        `Could not load thread ${args.threadId}. The draft must be created via Superhuman so it appears in your inbox; check the thread exists and try again.`
+      );
+    }
+    const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+    const subject = threadInfo.subject.startsWith("Re:")
+      ? threadInfo.subject
+      : `Re: ${threadInfo.subject}`;
+    const result = await createDraftWithUserInfo(userInfo, {
+      action: "reply",
+      inReplyToThreadId: args.threadId,
+      inReplyToRfc822Id: threadInfo.messageId ?? undefined,
+      references: threadInfo.references?.length ? threadInfo.references : undefined,
+      to: [threadInfo.from],
+      subject,
+      body: textToHtml(args.body),
+    });
+    if (result.success) {
+      return successResult(
+        `Reply draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${threadInfo.from}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+      );
+    }
+    return errorResult(
+      `Draft could not be created in Superhuman: ${result.error}. Run 'superhuman account auth' and try again.`
+    );
   }
 
-  // Send now, or draft path unavailable: use provider reply API
+  // Send now
   if (send && SEND_DISABLED) {
     return errorResult(
       "Sending is disabled. Reply drafts are created with send=false; send manually from Superhuman when ready."
@@ -717,36 +732,45 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
 
   if (!send) {
     const token = await resolveSuperhumanToken();
-    if (token?.userId && token?.idToken) {
-      const threadInfo = await getThreadInfoDirect(token, args.threadId);
-      if (threadInfo?.from) {
-        const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
-        const subject = threadInfo.subject.startsWith("Re:")
-          ? threadInfo.subject
-          : `Re: ${threadInfo.subject}`;
-        const toSet = new Set<string>([threadInfo.from]);
-        for (const e of threadInfo.to) {
-          if (e !== token.email) toSet.add(e);
-        }
-        const to = [...toSet];
-        const cc = (threadInfo.cc || []).filter((e) => e !== token.email);
-        const result = await createDraftWithUserInfo(userInfo, {
-          action: "reply",
-          inReplyToThreadId: args.threadId,
-          inReplyToRfc822Id: threadInfo.messageId ?? undefined,
-          references: threadInfo.references?.length ? threadInfo.references : undefined,
-          to,
-          cc: cc.length > 0 ? cc : undefined,
-          subject,
-          body: textToHtml(args.body),
-        });
-        if (result.success) {
-          return successResult(
-            `Reply-all draft created for thread ${args.threadId} (visible in Superhuman; open the thread to see it with the original email).\nTo: ${to.join(", ")}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
-          );
-        }
-      }
+    if (!token?.userId || !token?.idToken) {
+      return errorResult(
+        "Drafts must be created with Superhuman credentials to appear in the Superhuman inbox. Run 'superhuman account auth' in Terminal (with Superhuman running), then try again."
+      );
     }
+    const threadInfo = await getThreadInfoDirect(token, args.threadId);
+    if (!threadInfo?.from) {
+      return errorResult(
+        `Could not load thread ${args.threadId}. The draft must be created via Superhuman so it appears in your inbox; check the thread exists and try again.`
+      );
+    }
+    const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+    const subject = threadInfo.subject.startsWith("Re:")
+      ? threadInfo.subject
+      : `Re: ${threadInfo.subject}`;
+    const toSet = new Set<string>([threadInfo.from]);
+    for (const e of threadInfo.to) {
+      if (e !== token.email) toSet.add(e);
+    }
+    const to = [...toSet];
+    const cc = (threadInfo.cc || []).filter((e) => e !== token.email);
+    const result = await createDraftWithUserInfo(userInfo, {
+      action: "reply",
+      inReplyToThreadId: args.threadId,
+      inReplyToRfc822Id: threadInfo.messageId ?? undefined,
+      references: threadInfo.references?.length ? threadInfo.references : undefined,
+      to,
+      cc: cc.length > 0 ? cc : undefined,
+      subject,
+      body: textToHtml(args.body),
+    });
+    if (result.success) {
+      return successResult(
+        `Reply-all draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${to.join(", ")}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+      );
+    }
+    return errorResult(
+      `Draft could not be created in Superhuman: ${result.error}. Run 'superhuman account auth' and try again.`
+    );
   }
 
   if (send && SEND_DISABLED) {
@@ -777,6 +801,33 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
   }
 }
 
+/** Build HTML body for a forward draft (so it shows in Superhuman with original context). */
+function buildForwardBodyHtml(opts: {
+  userBody: string;
+  from: string;
+  subject: string;
+  toLine: string;
+  originalBody: string;
+}): string {
+  const esc = (s: string) =>
+    String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  const parts: string[] = [];
+  if (opts.userBody) {
+    parts.push(`<div>${opts.userBody}</div><br>`);
+  }
+  parts.push("<div>---------- Forwarded message ---------</div>");
+  parts.push(`<div>From: ${esc(opts.from)}</div>`);
+  parts.push(`<div>Date: ${esc(new Date().toUTCString())}</div>`);
+  parts.push(`<div>Subject: ${esc(opts.subject)}</div>`);
+  parts.push(`<div>To: ${esc(opts.toLine)}</div><br>`);
+  parts.push(opts.originalBody.includes("<") ? `<div>${opts.originalBody}</div>` : `<div>${textToHtml(opts.originalBody)}</div>`);
+  return parts.join("\n");
+}
+
 /**
  * Handler for superhuman_forward tool
  */
@@ -785,6 +836,54 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
   if (send && SEND_DISABLED) {
     return errorResult(
       "Sending is disabled. Forward drafts are created with send=false; send manually from Superhuman when ready."
+    );
+  }
+
+  // When creating a draft, use Superhuman backend only so the forward appears in Superhuman inbox and thread
+  if (!send) {
+    const token = await resolveSuperhumanToken();
+    if (!token?.userId || !token?.idToken) {
+      return errorResult(
+        "Drafts must be created with Superhuman credentials to appear in the Superhuman inbox. Run 'superhuman account auth' in Terminal (with Superhuman running), then try again."
+      );
+    }
+    const threadInfo = await getThreadInfoDirect(token, args.threadId);
+    if (!threadInfo) {
+      return errorResult(
+        `Could not load thread ${args.threadId}. The draft must be created via Superhuman so it appears in your inbox; check the thread exists and try again.`
+      );
+    }
+    const messages = await getThreadMessages(token, args.threadId);
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    const originalBody = lastMessage?.body ?? "";
+    const subject = threadInfo.subject.startsWith("Fwd:")
+      ? threadInfo.subject
+      : `Fwd: ${threadInfo.subject}`;
+    const toLine = [...threadInfo.to, ...threadInfo.cc].filter(Boolean).join(", ") || threadInfo.from;
+    const forwardBody = buildForwardBodyHtml({
+      userBody: args.body,
+      from: threadInfo.from,
+      subject: threadInfo.subject,
+      toLine,
+      originalBody,
+    });
+    const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
+    const result = await createDraftWithUserInfo(userInfo, {
+      action: "forward",
+      inReplyToThreadId: args.threadId,
+      inReplyToRfc822Id: threadInfo.messageId ?? undefined,
+      references: threadInfo.references?.length ? threadInfo.references : undefined,
+      to: [args.toEmail],
+      subject,
+      body: forwardBody,
+    });
+    if (result.success) {
+      return successResult(
+        `Forward draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${args.toEmail}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+      );
+    }
+    return errorResult(
+      `Draft could not be created in Superhuman: ${result.error}. Run 'superhuman account auth' and try again.`
     );
   }
 

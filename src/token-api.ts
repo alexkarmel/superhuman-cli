@@ -3577,39 +3577,51 @@ export async function getThreadMessages(
   return getThreadMessagesGmail(token, threadId);
 }
 
+const MSGRAPH_THREAD_MESSAGES_MAX = 500;
+
 async function getThreadMessagesMsGraph(
   token: TokenInfo,
   threadId: string
 ): Promise<FullThreadMessage[]> {
-  // The $filter on conversationId at /me/messages level returns "InefficientFilter",
-  // so we fetch recent messages and filter client-side by conversationId.
+  // The $filter on conversationId at /me/messages returns "InefficientFilter",
+  // so we paginate /me/messages and collect all messages for this conversationId.
   const selectFields = "id,subject,body,conversationId,receivedDateTime,from,toRecipients,ccRecipients,bodyPreview";
-  const recentPath = `/me/messages?$select=${selectFields}&$top=50&$orderby=receivedDateTime desc`;
-  const recentResult = await msgraphFetch(token.accessToken, recentPath);
+  const pageSize = 500;
+  let nextLink: string | null = null;
+  const allMessages: any[] = [];
 
-  let messages: any[] = [];
-  if (recentResult?.value) {
-    messages = recentResult.value.filter((m: any) => m.conversationId === threadId);
-    // Sort oldest first for thread context
-    messages.sort((a: any, b: any) =>
-      new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
-    );
-  }
+  do {
+    const url = nextLink || `${MSGRAPH_API_BASE}/me/messages?$select=${selectFields}&$top=${pageSize}&$orderby=receivedDateTime desc`;
+    const result = nextLink
+      ? await msgraphFetchUrl(token.accessToken, url)
+      : await msgraphFetch(token.accessToken, `/me/messages?$select=${selectFields}&$top=${pageSize}&$orderby=receivedDateTime desc`);
+    if (!result?.value?.length) break;
+    for (const m of result.value) {
+      if (m.conversationId === threadId) allMessages.push(m);
+    }
+    if (allMessages.length >= MSGRAPH_THREAD_MESSAGES_MAX) break;
+    nextLink = result["@odata.nextLink"] ?? null;
+  } while (nextLink);
+
+  // Sort oldest first for thread context
+  allMessages.sort((a: any, b: any) =>
+    new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime()
+  );
 
   // Fallback: if threadId is actually a message ID, fetch it directly
-  if (messages.length === 0) {
+  if (allMessages.length === 0) {
     const fallbackFields = "id,subject,body,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview";
     try {
       const msg = await msgraphFetch(token.accessToken, `/me/messages/${threadId}?$select=${fallbackFields}`);
       if (msg) {
-        messages = [msg];
+        allMessages.push(msg);
       }
     } catch {
       // Not a message ID either
     }
   }
 
-  return messages.map((msg: any) => ({
+  return allMessages.map((msg: any) => ({
     message_id: msg.id,
     subject: msg.subject || "",
     body: msg.body?.content || "",

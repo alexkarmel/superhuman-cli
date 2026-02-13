@@ -5,7 +5,8 @@
  */
 
 import type { ConnectionProvider } from "./connection-provider";
-import { gmailFetch, msgraphFetch } from "./token-api";
+import type { TokenInfo } from "./token-api";
+import { gmailFetch, getThreadMessages } from "./token-api";
 
 export interface ThreadMessage {
   id: string;
@@ -60,7 +61,7 @@ export async function readThread(
   const token = await provider.getToken();
 
   if (token.isMicrosoft) {
-    return readThreadMSGraph(token.accessToken, threadId);
+    return readThreadMSGraph(token, threadId);
   } else {
     return readThreadGmail(token.accessToken, threadId);
   }
@@ -110,59 +111,21 @@ async function readThreadGmail(
 
 /**
  * Read thread messages from MS Graph API.
- * Uses client-side filter by conversationId because $filter on conversationId
- * at /me/messages level returns an InefficientFilter error.
+ * Uses getThreadMessages (which paginates) so long threads are not truncated.
  */
 async function readThreadMSGraph(
-  accessToken: string,
+  token: TokenInfo,
   conversationId: string
 ): Promise<ThreadMessage[]> {
-  const path = `/me/messages?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,conversationId&$top=50&$orderby=receivedDateTime desc`;
-  const result = await msgraphFetch(accessToken, path);
-
-  let messages: any[] = [];
-  if (result?.value) {
-    messages = result.value.filter(
-      (m: any) => m.conversationId === conversationId
-    );
-    // Sort oldest first for thread reading order
-    messages.sort(
-      (a: any, b: any) =>
-        new Date(a.receivedDateTime).getTime() -
-        new Date(b.receivedDateTime).getTime()
-    );
-  }
-
-  // Fallback: if conversationId is actually a message ID, fetch it directly
-  if (messages.length === 0) {
-    try {
-      const msg = await msgraphFetch(
-        accessToken,
-        `/me/messages/${conversationId}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,conversationId`
-      );
-      if (msg) {
-        messages = [msg];
-      }
-    } catch {
-      // Not a message ID either
-    }
-  }
-
-  return messages.map((msg: any) => {
-    const mapRecipient = (r: any): { email: string; name: string } => ({
-      email: r?.emailAddress?.address || "",
-      name: r?.emailAddress?.name || "",
-    });
-
-    return {
-      id: msg.id,
-      threadId: msg.conversationId || conversationId,
-      subject: msg.subject || "(no subject)",
-      from: mapRecipient(msg.from),
-      to: (msg.toRecipients || []).map(mapRecipient),
-      cc: (msg.ccRecipients || []).map(mapRecipient),
-      date: msg.receivedDateTime || "",
-      snippet: msg.bodyPreview || "",
-    };
-  });
+  const fullMessages = await getThreadMessages(token, conversationId);
+  return fullMessages.map((msg) => ({
+    id: msg.message_id,
+    threadId: conversationId,
+    subject: msg.subject || "(no subject)",
+    from: msg.from,
+    to: msg.to,
+    cc: msg.cc,
+    date: msg.date,
+    snippet: msg.snippet,
+  }));
 }

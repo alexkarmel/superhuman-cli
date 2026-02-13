@@ -37,6 +37,8 @@ export interface DraftOptions {
   inReplyToThreadId?: string;
   inReplyToRfc822Id?: string;
   references?: string[];
+  /** Label IDs for the draft. Reply/forward use ["DRAFT", "INBOX"] so the thread stays visible in Superhuman inbox. */
+  labelIds?: string[];
 }
 
 export interface DraftResult {
@@ -133,10 +135,15 @@ export async function createDraftWithUserInfo(
       return emails;
     };
 
+    const action = options.action || "compose";
+    const labelIds =
+      options.labelIds ??
+      (action === "reply" || action === "forward" ? ["DRAFT", "INBOX"] : ["DRAFT"]);
+
     const draftValue = {
       id: draftId,
       threadId: threadId,
-      action: options.action || "compose",
+      action,
       name: null,
       from: `${userInfo.email.split("@")[0]} <${userInfo.email}>`,
       to: formatRecipients(options.to),
@@ -146,7 +153,7 @@ export async function createDraftWithUserInfo(
       body: options.body || "",
       snippet: (options.body || "").replace(/<[^>]*>/g, "").substring(0, 100),
       inReplyToRfc822Id: options.inReplyToRfc822Id || null,
-      labelIds: ["DRAFT"],
+      labelIds,
       clientCreatedAt: now,
       date: now,
       fingerprint: {
