@@ -96,8 +96,8 @@ function createMcpServer(): McpServer {
     "superhuman_reply",
     {
       description: SEND_DISABLED
-        ? "Reply to ONE person only (requires threadId). Use ONLY when the thread has a single other participant and the user explicitly wants to reply to that one person. For threads with multiple people, or when the user says 'reply in this thread', 'reply to everyone', 'respond to the thread', or 'reply all', use superhuman_reply_all instead. Draft appears in the thread. User sends manually from Superhuman."
-        : "Reply to one person only (requires threadId). Use ONLY for 1:1 threads when replying to that single person. For multi-person threads or 'reply in this thread' / 'reply all', use superhuman_reply_all. Optional send=true sends immediately; default is draft in thread.",
+        ? "Create a reply draft that appears in the user's Superhuman inbox. You MUST call this tool whenever the user asks to 'draft a reply', 'write a reply', or 'draft a response' to one person — do not just show draft text in chat; the draft only appears in their inbox when you call this tool. Reply to ONE person only (requires threadId and body). Use ONLY when the thread has a single other participant. For threads with multiple people use superhuman_reply_all. Draft appears in the thread in Superhuman. User sends manually from Superhuman."
+        : "Create a reply draft in the user's Superhuman inbox. You MUST call this tool when the user asks for a draft reply — do not just output text in chat. Reply to one person only (threadId + body). For multi-person threads use superhuman_reply_all. Optional send=true sends immediately; default is draft in thread.",
       inputSchema: SEND_DISABLED ? ReplySchemaDraftOnly : ReplySchema,
     },
     replyHandler
@@ -107,8 +107,8 @@ function createMcpServer(): McpServer {
     "superhuman_reply_all",
     {
       description: SEND_DISABLED
-        ? "Reply to everyone on the thread (requires threadId). Use when the thread has multiple participants, or the user says 'reply in this thread', 'reply all', 'reply to everyone', 'respond to the thread', or 'draft a response' in a group thread. Prefer this over superhuman_reply whenever more than one other person is on the thread. Recipients are collected from all messages so everyone is included. Draft appears in the thread. User sends manually from Superhuman."
-        : "Reply to everyone on the thread (requires threadId). Use when the thread has multiple people, or the user says 'reply in this thread', 'reply all', 'reply to everyone'. Prefer over superhuman_reply for any multi-person thread. Recipients from all messages. Draft appears in the thread. Optional send=true sends immediately.",
+        ? "Create a reply draft that appears in the user's Superhuman inbox. You MUST call this tool whenever the user asks to 'draft a reply', 'draft replies', 'write a reply', or 'draft a response' — do not just show draft text in chat; the draft only appears in their inbox when you call this tool. Use for threads with multiple participants (threadId + body). For 'draft replies to Bob and Thomas' (one thread with both): call once with that thread's threadId and one body. For multiple separate threads: call once per thread with each threadId and body. Recipients are collected from all messages. Draft appears in the thread. User sends manually from Superhuman."
+        : "Create a reply draft in the user's Superhuman inbox. You MUST call this tool when the user asks for a draft reply — do not just output text in chat. Use for multi-person threads (threadId + body). For multiple threads call once per thread. Recipients from all messages. Optional send=true sends immediately.",
       inputSchema: SEND_DISABLED ? ReplyAllSchemaDraftOnly : ReplyAllSchema,
     },
     replyAllHandler
@@ -118,8 +118,8 @@ function createMcpServer(): McpServer {
     "superhuman_forward",
     {
       description: SEND_DISABLED
-        ? "Create a forward draft (requires threadId and toEmail). Use when the user asks to 'forward'. This is the only way to create forward drafts; the draft appears in the thread with the conversation above it. User sends manually from Superhuman."
-        : "Forward a thread (requires threadId and toEmail). The draft appears in the thread with the conversation above it. Optional send=true sends immediately.",
+        ? "Create a forward draft that appears in the user's Superhuman inbox. You MUST call this tool when the user asks to 'draft a forward' or 'forward' — do not just show text in chat; the draft only appears in their inbox when you call this tool. Requires threadId, toEmail, and optional body. Draft appears in the thread. User sends manually from Superhuman."
+        : "Create a forward draft in the user's Superhuman inbox. You MUST call this tool when the user asks to forward — do not just output text in chat. Requires threadId and toEmail. Optional send=true sends immediately.",
       inputSchema: SEND_DISABLED ? ForwardSchemaDraftOnly : ForwardSchema,
     },
     forwardHandler
