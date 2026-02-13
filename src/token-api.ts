@@ -3577,6 +3577,37 @@ export async function getThreadMessages(
   return getThreadMessagesGmail(token, threadId);
 }
 
+/**
+ * Get all unique participants in a thread for reply-all (from/to/cc across all messages).
+ * Excludes the current user. Use this instead of getThreadInfoDirect's last-message to/cc
+ * so reply-all includes everyone on the thread, not just the last message's recipients.
+ *
+ * @returns { to: string[], cc: string[] } — all participants in to (cc empty), or null if thread not found
+ */
+export async function getThreadReplyAllRecipients(
+  token: TokenInfo,
+  threadId: string
+): Promise<{ to: string[]; cc: string[] } | null> {
+  const messages = await getThreadMessages(token, threadId);
+  if (messages.length === 0) return null;
+
+  const currentEmail = (token.email || "").toLowerCase();
+  const seen = new Set<string>();
+
+  for (const msg of messages) {
+    const add = (email: string) => {
+      const e = (email || "").trim().toLowerCase();
+      if (e && e !== currentEmail) seen.add(e);
+    };
+    if (msg.from?.email) add(msg.from.email);
+    for (const r of msg.to || []) if (r?.email) add(r.email);
+    for (const r of msg.cc || []) if (r?.email) add(r.email);
+  }
+
+  const to = [...seen];
+  return { to, cc: [] };
+}
+
 const MSGRAPH_THREAD_MESSAGES_MAX = 500;
 
 async function getThreadMessagesMsGraph(

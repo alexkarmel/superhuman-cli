@@ -41,6 +41,7 @@ import {
   askAISearch,
   getThreadInfoDirect,
   getThreadMessages,
+  getThreadReplyAllRecipients,
   type TokenInfo,
 } from "../token-api";
 import fs from "fs";
@@ -687,29 +688,30 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
         `Could not load thread ${args.threadId}. The draft must be created via Superhuman so it appears in your inbox; check the thread exists and try again.`
       );
     }
+    // Reply-all: use all participants from entire thread (not just last message's to/cc)
+    const replyAllRecipients = await getThreadReplyAllRecipients(token, args.threadId);
+    const to = replyAllRecipients?.to?.length
+      ? replyAllRecipients.to
+      : [...new Set([threadInfo.from, ...threadInfo.to].filter((e) => e && e !== token.email))];
+    const cc = replyAllRecipients?.cc?.length ? replyAllRecipients.cc : undefined;
+
     const userInfo = getUserInfoFromCache(token.userId, token.email, token.idToken);
     const subject = threadInfo.subject.startsWith("Re:")
       ? threadInfo.subject
       : `Re: ${threadInfo.subject}`;
-    const toSet = new Set<string>([threadInfo.from]);
-    for (const e of threadInfo.to) {
-      if (e !== token.email) toSet.add(e);
-    }
-    const to = [...toSet];
-    const cc = (threadInfo.cc || []).filter((e) => e !== token.email);
     const result = await createDraftWithUserInfo(userInfo, {
       action: "reply",
       inReplyToThreadId: args.threadId,
       inReplyToRfc822Id: threadInfo.messageId ?? undefined,
       references: threadInfo.references?.length ? threadInfo.references : undefined,
       to,
-      cc: cc.length > 0 ? cc : undefined,
+      cc: cc?.length ? cc : undefined,
       subject,
       body: textToHtml(args.body),
     });
     if (result.success) {
       return successResult(
-        `Reply-all draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${to.join(", ")}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+        `Reply-all draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${to.join(", ")}${cc?.length ? `\nCc: ${cc.join(", ")}` : ""}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
       );
     }
     return errorResult(
@@ -803,7 +805,12 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
     const subject = threadInfo.subject.startsWith("Fwd:")
       ? threadInfo.subject
       : `Fwd: ${threadInfo.subject}`;
-    const toLine = [...threadInfo.to, ...threadInfo.cc].filter(Boolean).join(", ") || threadInfo.from;
+    // Use all thread participants for "To:" in the forwarded header (same as reply-all); fallback to last message
+    const participants = await getThreadReplyAllRecipients(token, args.threadId);
+    const toLine =
+      (participants?.to?.length ? participants.to.join(", ") : null) ||
+      [...threadInfo.to, ...threadInfo.cc].filter(Boolean).join(", ") ||
+      threadInfo.from;
     const forwardBody = buildForwardBodyHtml({
       userBody: args.body,
       from: threadInfo.from,

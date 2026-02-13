@@ -107,8 +107,8 @@ function createMcpServer(): McpServer {
     "superhuman_reply_all",
     {
       description: SEND_DISABLED
-        ? "Create a reply-all draft in the thread (requires threadId). Use when the user asks to 'reply all'. This is the only way to create reply-all drafts; the draft appears in the thread with the conversation above it. User sends manually from Superhuman."
-        : "Reply-all in-thread (requires threadId). Use when the user asks to 'reply all'. The draft appears in the thread with the conversation above it. Optional send=true sends immediately.",
+        ? "Create a reply-all draft in the thread (requires threadId). Use when the user asks to 'reply all'. Recipients are collected from all messages in the thread so everyone on the thread is included. Draft appears in the thread with the conversation above it. User sends manually from Superhuman."
+        : "Reply-all in-thread (requires threadId). Use when the user asks to 'reply all'. Recipients are collected from all messages in the thread. Draft appears in the thread with the conversation above it. Optional send=true sends immediately.",
       inputSchema: SEND_DISABLED ? ReplyAllSchemaDraftOnly : ReplyAllSchema,
     },
     replyAllHandler
