@@ -74,20 +74,7 @@ export async function searchInbox(
     // For Gmail, add label:INBOX to query
     // For MS Graph, listInboxDirect already filters to inbox
     if (token.isMicrosoft) {
-      // MS Graph: search within inbox folder
-      // Note: MS Graph $search works across all messages, so we use folder filter
-      const path = `/me/mailFolders/Inbox/messages?$search="${encodeURIComponent(query)}"&$top=${limit}&$select=id,conversationId,subject,from,receivedDateTime,bodyPreview`;
-      const response = await fetch(
-        `https://graph.microsoft.com/v1.0${path}`,
-        {
-          headers: { Authorization: `Bearer ${token.accessToken}` },
-        }
-      );
-
-      if (!response.ok) {
-        return [];
-      }
-
+      // MS Graph: search within inbox folder with pagination
       interface MSGraphMessage {
         id: string;
         conversationId: string;
@@ -96,15 +83,27 @@ export async function searchInbox(
         receivedDateTime: string;
         bodyPreview?: string;
       }
+      const GRAPH_PAGE = 500;
+      const MAX_SCAN = 5000;
+      const allMessages: MSGraphMessage[] = [];
+      let nextLink: string | null = null;
+      const basePath = `https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages?$search="${encodeURIComponent(query)}"&$top=${GRAPH_PAGE}&$select=id,conversationId,subject,from,receivedDateTime,bodyPreview`;
 
-      const result = await response.json() as { value?: MSGraphMessage[] };
-      if (!result.value) {
-        return [];
-      }
+      do {
+        const url = nextLink ?? basePath;
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${token.accessToken}` },
+        });
+        if (!response.ok) return [];
+        const result = (await response.json()) as { value?: MSGraphMessage[]; "@odata.nextLink"?: string };
+        if (!result.value?.length) break;
+        allMessages.push(...result.value);
+        if (allMessages.length >= MAX_SCAN) break;
+        nextLink = result["@odata.nextLink"] ?? null;
+      } while (nextLink);
 
-      // Group by conversationId
       const conversationMap = new Map<string, MSGraphMessage[]>();
-      for (const msg of result.value) {
+      for (const msg of allMessages) {
         const existing = conversationMap.get(msg.conversationId);
         if (!existing) {
           conversationMap.set(msg.conversationId, [msg]);
@@ -115,11 +114,11 @@ export async function searchInbox(
 
       const threads: InboxThread[] = [];
       for (const [convId, messages] of conversationMap) {
+        if (threads.length >= limit) break;
         messages.sort((a, b) =>
           new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
         );
         const latest = messages[0];
-
         threads.push({
           id: convId,
           subject: latest.subject || "(no subject)",
@@ -132,10 +131,7 @@ export async function searchInbox(
           labelIds: [],
           messageCount: messages.length,
         });
-
-        if (threads.length >= limit) break;
       }
-
       return threads;
     } else {
       // Gmail: Add label:INBOX to the query

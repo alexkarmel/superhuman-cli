@@ -59,7 +59,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_search",
     {
-      description: "Search the Superhuman inbox. Returns matching threads with a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_reply, etc.",
+      description: "Search the Superhuman inbox. Returns matching threads with a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_reply, etc. Backend paginates automatically so you get all results up to the limit (default 500, max 5000). For 'how many emails today' use query 'after:YYYY/M/D' and limit 5000 to get every matching email.",
       inputSchema: SearchSchema,
     },
     searchHandler
@@ -68,7 +68,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_inbox",
     {
-      description: "List recent emails from the Superhuman inbox. Returns thread summaries and a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_archive, etc.",
+      description: "List recent emails from the Superhuman inbox. Returns thread summaries and a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_archive, etc. Backend paginates automatically (default 500, max 5000) so you never miss emails.",
       inputSchema: InboxSchema,
     },
     inboxHandler

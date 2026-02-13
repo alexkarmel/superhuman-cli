@@ -79,16 +79,19 @@ export const SendSchema = EmailSchema;
 /**
  * Zod schema for inbox search parameters
  */
+/** Max threads to return per request; backend paginates to reach this. */
+const INBOX_SEARCH_MAX_LIMIT = 5000;
+
 export const SearchSchema = z.object({
-  query: z.string().describe("Search query string"),
-  limit: z.number().optional().describe("Maximum number of results to return (default: 10)"),
+  query: z.string().describe("Search query string (e.g. 'after:2025/2/12' for date, or 'from:name')"),
+  limit: z.number().optional().describe("Maximum number of threads to return (default: 500). Backend paginates automatically; use up to 5000 to get all matching emails."),
 });
 
 /**
  * Zod schema for inbox listing
  */
 export const InboxSchema = z.object({
-  limit: z.number().optional().describe("Maximum number of threads to return (default: 10)"),
+  limit: z.number().optional().describe("Maximum number of threads to return (default: 500). Backend paginates automatically; use up to 5000 to get all."),
 });
 
 /**
@@ -460,7 +463,7 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
 
   try {
     provider = await getMcpProvider();
-    const limit = args.limit ?? 10;
+    const limit = Math.min(args.limit ?? 500, INBOX_SEARCH_MAX_LIMIT);
 
     const threads = await searchInbox(provider, { query: args.query, limit });
 
@@ -492,7 +495,8 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
 
   try {
     provider = await getMcpProvider();
-    const threads = await listInbox(provider, { limit: args.limit ?? 10 });
+    const limit = Math.min(args.limit ?? 500, INBOX_SEARCH_MAX_LIMIT);
+    const threads = await listInbox(provider, { limit });
 
     if (threads.length === 0) {
       return successResult("No emails in inbox");
@@ -656,13 +660,17 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
           ? threadInfo.subject
           : `Re: ${threadInfo.subject}`;
         const result = await createDraftWithUserInfo(userInfo, {
+          action: "reply",
+          inReplyToThreadId: args.threadId,
+          inReplyToRfc822Id: threadInfo.messageId ?? undefined,
+          references: threadInfo.references?.length ? threadInfo.references : undefined,
           to: [threadInfo.from],
           subject,
           body: textToHtml(args.body),
         });
         if (result.success) {
           return successResult(
-            `Reply draft created for thread ${args.threadId} (visible in Superhuman drafts).\nTo: ${threadInfo.from}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+            `Reply draft created for thread ${args.threadId} (visible in Superhuman; open the thread to see it with the original email).\nTo: ${threadInfo.from}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
           );
         }
       }
@@ -723,6 +731,10 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
         const to = [...toSet];
         const cc = (threadInfo.cc || []).filter((e) => e !== token.email);
         const result = await createDraftWithUserInfo(userInfo, {
+          action: "reply",
+          inReplyToThreadId: args.threadId,
+          inReplyToRfc822Id: threadInfo.messageId ?? undefined,
+          references: threadInfo.references?.length ? threadInfo.references : undefined,
           to,
           cc: cc.length > 0 ? cc : undefined,
           subject,
@@ -730,7 +742,7 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
         });
         if (result.success) {
           return successResult(
-            `Reply-all draft created for thread ${args.threadId} (visible in Superhuman drafts).\nTo: ${to.join(", ")}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
+            `Reply-all draft created for thread ${args.threadId} (visible in Superhuman; open the thread to see it with the original email).\nTo: ${to.join(", ")}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
           );
         }
       }

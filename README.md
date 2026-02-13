@@ -347,6 +347,8 @@ bun src/index.ts --mcp
 | `superhuman_calendar_free_busy` | Check free/busy availability |
 | `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
 
+**Inbox / search limits:** Inbox and search **paginate automatically** so no emails are missed. Default **500** threads per request, max **5000**. For “how many emails today?” Use query `after:YYYY/M/D` and limit 5000 to get every matching email.
+
 ### Claude Desktop Configuration
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
