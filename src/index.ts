@@ -19,9 +19,12 @@ const args = process.argv.slice(2);
 const isMcpMode = args.includes("--mcp");
 
 if (isMcpMode) {
-  // MCP server mode - run silently (no console output to stdout)
-  // All communication happens via stdio JSON-RPC
-  runMcpServer().catch(console.error);
+  // MCP server mode: stdout/stderr must only carry JSON-RPC. Any console.log/error/warn
+  // from our code or deps (e.g. token-api) would corrupt the stream and cause "cli json error"
+  // in Claude Desktop. Suppress all console output for the lifetime of the process.
+  const noop = () => {};
+  console.log = console.error = console.warn = console.info = console.debug = noop;
+  runMcpServer().catch(() => process.exit(1));
 } else {
   // CLI mode - import and run the CLI
   import("./cli").then((cli) => {

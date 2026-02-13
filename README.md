@@ -428,6 +428,11 @@ All other operations (read, reply, forward, draft, archive, delete, labels, star
 
 Supports both Gmail and Microsoft/Outlook accounts.
 
+## Troubleshooting
+
+**"cli json error" or similar in Claude when using Superhuman tools**  
+The MCP server must only send JSON-RPC on stdout. Any `console.log`/`console.error` from the process would corrupt the stream. The codebase suppresses all console output when running in MCP mode (`--mcp`). If a coworker sees this, ensure they have the latest version (with that suppression) and that Claude Desktop is starting the server with `bun path/to/src/index.ts --mcp` (or the equivalent from your installer).
+
 ## License
 
 MIT
