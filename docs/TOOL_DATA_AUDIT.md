@@ -11,7 +11,7 @@ This doc records where each tool gets its data (last message only vs full thread
 | **superhuman_forward** | Thread participants for "To:" line; last message for quoted body | **Updated** — "Forwarded message" To line uses all participants; quoted content is still last message only. |
 | **superhuman_read** | Full thread | OK — uses `getThreadMessages` / `readThread`. |
 | **superhuman_attachments** | Full thread | OK — `listAttachments` → `getThreadDirect` iterates all messages. |
-| **superhuman_inbox / search** | Thread list (not per-message) | OK. |
+| **superhuman_inbox / search** | Thread list (not per-message) | OK. Default limit 5000 so "all emails from today" etc. won't miss any. |
 
 ## Details
 

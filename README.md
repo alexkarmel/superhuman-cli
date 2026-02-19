@@ -319,7 +319,7 @@ bun src/index.ts --mcp
 | `superhuman_reply` | Reply or draft a response (draft appears in thread with conversation above it) |
 | `superhuman_reply_all` | Reply-all (draft in thread) |
 | `superhuman_forward` | Forward (draft in thread) |
-| `superhuman_archive` | Archive thread(s) |
+| `superhuman_archive` | Archive (mark as done) thread(s) |
 | `superhuman_delete` | Delete thread(s) |
 | `superhuman_mark_read` | Mark thread(s) as read |
 | `superhuman_mark_unread` | Mark thread(s) as unread |
@@ -346,7 +346,7 @@ bun src/index.ts --mcp
 | `superhuman_calendar_free_busy` | Check free/busy availability |
 | `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
 
-**Inbox / search limits:** Inbox and search **paginate automatically** so no emails are missed. Default **500** threads per request, max **5000**. For “how many emails today?” Use query `after:YYYY/M/D` and limit 5000 to get every matching email.
+**Inbox / search limits:** Inbox and search **paginate automatically** so no emails are missed. Default **5000** threads per request (max 5000). For “how many emails today?” Use query `after:YYYY/M/D` and limit 5000 to get every matching email.
 
 ### Claude Desktop Configuration
 

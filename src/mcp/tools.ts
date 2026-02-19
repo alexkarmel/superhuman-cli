@@ -86,7 +86,7 @@ const INBOX_SEARCH_MAX_LIMIT = 5000;
 
 export const SearchSchema = z.object({
   query: z.string().describe("Search query string (e.g. 'after:2025/2/12' for date, or 'from:name')"),
-  limit: z.number().optional().describe("Maximum number of threads to return (default: 500). Backend paginates automatically; use up to 5000 to get all matching emails."),
+  limit: z.number().optional().describe("Maximum threads to return (default: 5000 so no emails are missed; max 5000). Use for broad queries like 'all emails from today'."),
   includeDone: z.boolean().optional().describe("If true, search all mail including archived/done. Use when the user asks to find archived emails or 'search everywhere'."),
 });
 
@@ -94,7 +94,7 @@ export const SearchSchema = z.object({
  * Zod schema for inbox listing
  */
 export const InboxSchema = z.object({
-  limit: z.number().optional().describe("Maximum number of threads to return (default: 500). Backend paginates automatically; use up to 5000 to get all."),
+  limit: z.number().optional().describe("Maximum threads to return (default: 5000 so no emails are missed; max 5000). Use for 'all emails', 'emails from today', etc."),
 });
 
 /**
@@ -411,7 +411,7 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
 
   try {
     provider = await getMcpProvider();
-    const limit = Math.min(args.limit ?? 500, INBOX_SEARCH_MAX_LIMIT);
+    const limit = Math.min(args.limit ?? 5000, INBOX_SEARCH_MAX_LIMIT);
 
     const threads = await searchInbox(provider, {
       query: args.query,
@@ -447,7 +447,7 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
 
   try {
     provider = await getMcpProvider();
-    const limit = Math.min(args.limit ?? 500, INBOX_SEARCH_MAX_LIMIT);
+    const limit = Math.min(args.limit ?? 5000, INBOX_SEARCH_MAX_LIMIT);
     const threads = await listInbox(provider, { limit });
 
     if (threads.length === 0) {

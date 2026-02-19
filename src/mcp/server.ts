@@ -50,7 +50,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_search",
     {
-      description: "Search the Superhuman inbox (or all mail). Returns matching threads with a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_reply, etc. Use includeDone=true when the user asks to find archived emails or 'search all my emails'. Backend paginates automatically (default 500, max 5000).",
+      description: "Search the Superhuman inbox (or all mail). Returns matching threads with a threadId for each. For 'all emails from today', 'how many emails', or broad queries: use limit 5000 (or omit for default 5000) so no emails are missed. Use includeDone=true for archived emails. Backend paginates automatically (default 5000, max 5000).",
       inputSchema: SearchSchema,
     },
     searchHandler
@@ -59,7 +59,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_inbox",
     {
-      description: "List recent emails from the Superhuman inbox. Returns thread summaries and a threadId for each; use those threadIds with superhuman_read, superhuman_star, superhuman_archive, etc. Backend paginates automatically (default 500, max 5000) so you never miss emails.",
+      description: "List emails from the Superhuman inbox. Returns thread summaries and a threadId for each. For 'all emails', 'emails from today', or 'show my inbox': use limit 5000 (or omit for default 5000) so no emails are missed. Backend paginates automatically (default 5000, max 5000).",
       inputSchema: InboxSchema,
     },
     inboxHandler
@@ -128,7 +128,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_archive",
     {
-      description: "Archive one or more email threads. Pass threadIds from superhuman_inbox or superhuman_search. Removes threads from inbox without deleting.",
+      description: "Archive (mark as done in Superhuman) one or more email threads. Use when the user says 'mark as done', 'archive', 'done', or 'clear from inbox'. Pass threadIds from superhuman_inbox or superhuman_search. Removes threads from inbox without deleting.",
       inputSchema: ArchiveSchema,
     },
     archiveHandler
