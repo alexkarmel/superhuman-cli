@@ -258,26 +258,15 @@ if [ "$SETUP_EXIT" -eq 0 ]; then
   echo "  ✅ Credential sync runs automatically on every login and every 10 min (no Terminal needed)"
   echo "  ✅ Claude Desktop config updated"
   echo ""
-  echo "🔄 Next steps:"
+  echo "⚠️  IMPORTANT — You must restart Claude Desktop for this to take effect:"
+  echo ""
   echo "  1. Quit Claude Desktop completely (Cmd+Q)"
-  echo "  2. Restart Claude Desktop"
-  echo "  3. Chat with Claude about your emails"
+  echo "  2. Reopen Claude Desktop"
   echo ""
   echo "💡 Drafts in Superhuman: If you use reply/forward from Claude, leave Superhuman open"
   echo "   once after boot (or open it when you need drafts). Sync runs in the background."
   echo ""
   echo "💬 Try: \"Show my inbox\" or \"Draft a reply to the latest from John\""
-  echo ""
-  printf "Open Claude Desktop now? (y/n) "
-  read -r response
-  if [[ "$response" =~ ^[Yy]$ ]]; then
-    open -a "Claude"
-    echo ""
-    echo "✨ Done!"
-  else
-    echo ""
-    echo "✨ Done. Open Claude Desktop when you’re ready."
-  fi
 else
   echo ""
   echo "╔════════════════════════════════════════════════════╗"
