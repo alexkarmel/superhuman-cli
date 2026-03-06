@@ -822,36 +822,67 @@ interface MSGraphMessagesResponse {
   "@odata.nextLink"?: string;
 }
 
-/**
- * Search emails using direct Gmail/MS Graph API.
- *
- * This bypasses Superhuman's search which ignores the query parameter.
- * Uses Gmail's messages.list with q parameter or MS Graph's search endpoint.
- *
- * @param token - Token info with accessToken and isMicrosoft flag
- * @param query - Gmail search query (e.g., "from:anthropic", "subject:meeting")
- * @param limit - Maximum results (default 10)
- * @returns Array of InboxThread objects
- */
+/** Result of search/list with pagination (avoids timeout by fetching in pages). */
+export interface SearchListResult {
+  threads: InboxThread[];
+  hasMore: boolean;
+  nextOffset: number;
+}
+
 const GMAIL_PAGE_SIZE = 500;
 const MAX_MESSAGES_TO_SCAN = 5000;
+/** Fetch this many thread details in parallel (keeps search/inbox under ~60s for large results). */
+const GMAIL_THREAD_FETCH_CONCURRENCY = 25;
 
+function buildThreadFromGmailResponse(threadResult: GmailThreadResponse): InboxThread {
+  const lastMessage = threadResult.messages[threadResult.messages.length - 1];
+  const headers = lastMessage.payload.headers;
+  const subjectHeader = headers.find(h => h.name.toLowerCase() === "subject");
+  const fromHeader = headers.find(h => h.name.toLowerCase() === "from");
+  const dateHeader = headers.find(h => h.name.toLowerCase() === "date");
+  const fromValue = fromHeader?.value || "";
+  const fromMatch = fromValue.match(/^(?:"?([^"<]*)"?\s*)?<?([^>]+)>?$/);
+  const fromName = fromMatch?.[1]?.trim() || "";
+  const fromEmail = fromMatch?.[2]?.trim() || fromValue;
+  return {
+    id: threadResult.id,
+    subject: subjectHeader?.value || "(no subject)",
+    from: { email: fromEmail, name: fromName },
+    date: dateHeader?.value || new Date(parseInt(lastMessage.internalDate)).toISOString(),
+    snippet: lastMessage.snippet || "",
+    labelIds: lastMessage.labelIds || [],
+    messageCount: threadResult.messages.length,
+  };
+}
+
+/**
+ * Search emails using direct Gmail/MS Graph API.
+ * Uses parallel thread fetches and optional offset/pageSize to avoid MCP timeout.
+ *
+ * @param token - Token info with accessToken and isMicrosoft flag
+ * @param query - Gmail search query (e.g., "from:anthropic", "after:2025/3/4")
+ * @param limit - Page size (max threads to return this call; default 10)
+ * @param offset - Skip this many threads (default 0); use with limit for pagination
+ * @returns SearchListResult with threads, hasMore, nextOffset
+ */
 export async function searchGmailDirect(
   token: TokenInfo,
   query: string,
-  limit: number = 10
-): Promise<InboxThread[]> {
+  limit: number = 10,
+  offset: number = 0
+): Promise<SearchListResult> {
   if (token.isMicrosoft) {
-    return searchMSGraphDirect(token, query, limit);
+    return searchMSGraphDirect(token, query, limit, offset);
   }
 
-  // Step 1: Paginate messages.list until we have enough unique thread IDs (or run out)
+  // Step 1: Paginate messages.list until we have enough unique thread IDs for this page
   const threadIdSet = new Set<string>();
   let pageToken: string | undefined;
   let totalScanned = 0;
 
-  while (threadIdSet.size < limit && totalScanned < MAX_MESSAGES_TO_SCAN) {
-    const pageSize = Math.min(GMAIL_PAGE_SIZE, limit * 2);
+  const needCount = offset + limit;
+  while (threadIdSet.size < needCount && totalScanned < MAX_MESSAGES_TO_SCAN) {
+    const pageSize = Math.min(GMAIL_PAGE_SIZE, needCount * 2);
     let searchPath = `/messages?q=${encodeURIComponent(query)}&maxResults=${pageSize}`;
     if (pageToken) searchPath += `&pageToken=${encodeURIComponent(pageToken)}`;
     const searchResult = await gmailFetch(token.accessToken, searchPath) as GmailMessagesListResponse | null;
@@ -867,49 +898,29 @@ export async function searchGmailDirect(
     if (!pageToken) break;
   }
 
-  const threadIds = Array.from(threadIdSet).slice(0, limit);
+  const allIds = Array.from(threadIdSet);
+  const hasMore = allIds.length > offset + limit;
+  const threadIds = allIds.slice(offset, offset + limit);
 
-  // Step 2: Fetch thread details for each unique thread
+  // Step 2: Fetch thread details in parallel (batched) to avoid timeout
   const threads: InboxThread[] = [];
-
-  for (const threadId of threadIds) {
-    const threadPath = `/threads/${threadId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
-    const threadResult = await gmailFetch(token.accessToken, threadPath) as GmailThreadResponse | null;
-
-    if (!threadResult || !threadResult.messages || threadResult.messages.length === 0) {
-      continue;
+  for (let i = 0; i < threadIds.length; i += GMAIL_THREAD_FETCH_CONCURRENCY) {
+    const batch = threadIds.slice(i, i + GMAIL_THREAD_FETCH_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (threadId) => {
+        const threadPath = `/threads/${threadId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
+        const threadResult = await gmailFetch(token.accessToken, threadPath) as GmailThreadResponse | null;
+        return threadResult;
+      })
+    );
+    for (const threadResult of results) {
+      if (threadResult?.messages?.length) {
+        threads.push(buildThreadFromGmailResponse(threadResult));
+      }
     }
-
-    // Get the last message in the thread for display
-    const lastMessage = threadResult.messages[threadResult.messages.length - 1];
-    const headers = lastMessage.payload.headers;
-
-    // Extract headers
-    const subjectHeader = headers.find(h => h.name.toLowerCase() === "subject");
-    const fromHeader = headers.find(h => h.name.toLowerCase() === "from");
-    const dateHeader = headers.find(h => h.name.toLowerCase() === "date");
-
-    // Parse the From header (format: "Name <email>" or just "email")
-    const fromValue = fromHeader?.value || "";
-    const fromMatch = fromValue.match(/^(?:"?([^"<]*)"?\s*)?<?([^>]+)>?$/);
-    const fromName = fromMatch?.[1]?.trim() || "";
-    const fromEmail = fromMatch?.[2]?.trim() || fromValue;
-
-    threads.push({
-      id: threadResult.id,
-      subject: subjectHeader?.value || "(no subject)",
-      from: {
-        email: fromEmail,
-        name: fromName,
-      },
-      date: dateHeader?.value || new Date(parseInt(lastMessage.internalDate)).toISOString(),
-      snippet: lastMessage.snippet || "",
-      labelIds: lastMessage.labelIds || [],
-      messageCount: threadResult.messages.length,
-    });
   }
 
-  return threads;
+  return { threads, hasMore, nextOffset: offset + threads.length };
 }
 
 /**
@@ -926,17 +937,17 @@ const MAX_GRAPH_MESSAGES_TO_SCAN = 5000;
 async function searchMSGraphDirect(
   token: TokenInfo,
   query: string,
-  limit: number
-): Promise<InboxThread[]> {
+  limit: number,
+  offset: number = 0
+): Promise<SearchListResult> {
   type Msg = MSGraphMessagesResponse["value"][number];
   const allMessages: Msg[] = [];
   let nextLink: string | null = null;
   const searchPath = `/me/messages?$search="${encodeURIComponent(query)}"&$top=${MSGRAPH_PAGE_SIZE}&$select=id,conversationId,subject,from,receivedDateTime,bodyPreview`;
 
   do {
-    const url = nextLink || `${MSGRAPH_API_BASE}${searchPath}`;
     const result = nextLink
-      ? await msgraphFetchUrl(token.accessToken, url)
+      ? await msgraphFetchUrl(token.accessToken, nextLink)
       : await msgraphFetch(token.accessToken, searchPath);
     const data = result as MSGraphMessagesResponse | null;
     if (!data?.value?.length) break;
@@ -955,10 +966,13 @@ async function searchMSGraphDirect(
     }
   }
 
-  const threads: InboxThread[] = [];
   const conversationEntries = Array.from(conversationMap.entries());
-  for (const [conversationId, messages] of conversationEntries) {
-    if (threads.length >= limit) break;
+  const total = conversationEntries.length;
+  const hasMore = total > offset + limit;
+  const pageEntries = conversationEntries.slice(offset, offset + limit);
+
+  const threads: InboxThread[] = [];
+  for (const [conversationId, messages] of pageEntries) {
     messages.sort((a, b) =>
       new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
     );
@@ -976,7 +990,81 @@ async function searchMSGraphDirect(
       messageCount: messages.length,
     });
   }
-  return threads;
+  return { threads, hasMore, nextOffset: offset + threads.length };
+}
+
+/** Options for count-inbox (no thread detail fetches; fast for large mailboxes). */
+export interface CountInboxOptions {
+  /** Gmail/Graph search query (e.g. "after:2025/3/4" for last 48h). Empty = all inbox. */
+  query?: string;
+  /** If true, count all mail including archived/done. Default false = inbox only. */
+  includeDone?: boolean;
+}
+
+/** Result of count-inbox: message and thread counts. */
+export interface CountInboxResult {
+  messageCount: number;
+  threadCount: number;
+}
+
+/**
+ * Count messages/threads matching a query without fetching thread details.
+ * Uses only messages.list (Gmail) or messages pagination (Graph), so it stays
+ * fast for large mailboxes and avoids the N+1 thread fetches that cause timeouts.
+ */
+export async function countInboxDirect(
+  token: TokenInfo,
+  options: CountInboxOptions = {}
+): Promise<CountInboxResult> {
+  const { query = "", includeDone = false } = options;
+
+  if (token.isMicrosoft) {
+    const folder = includeDone ? "/me/messages" : "/me/mailFolders/Inbox/messages";
+    const searchPart = query
+      ? `$search="${encodeURIComponent(query)}"&`
+      : "";
+    const path = `${folder}?${searchPart}$top=${MSGRAPH_PAGE_SIZE}&$select=id,conversationId`;
+    const threadIds = new Set<string>();
+    let messageCount = 0;
+    let nextLink: string | null = null;
+
+    do {
+      const result = nextLink
+        ? await msgraphFetchUrl(token.accessToken, nextLink)
+        : await msgraphFetch(token.accessToken, path);
+      const data = result as { value?: Array<{ id: string; conversationId: string }>; "@odata.nextLink"?: string } | null;
+      if (!data?.value?.length) break;
+      for (const m of data.value) {
+        messageCount += 1;
+        threadIds.add(m.conversationId);
+      }
+      if (messageCount >= MAX_GRAPH_MESSAGES_TO_SCAN) break;
+      nextLink = data?.["@odata.nextLink"] ?? null;
+    } while (nextLink);
+
+    return { messageCount, threadCount: threadIds.size };
+  }
+
+  // Gmail: only messages.list pagination, no threads.get
+  const baseQuery = includeDone ? query.trim() : (query.trim() ? `label:INBOX ${query.trim()}` : "label:INBOX");
+  const q = baseQuery || "label:INBOX";
+  const threadIdSet = new Set<string>();
+  let totalMessages = 0;
+  let pageToken: string | undefined;
+
+  while (totalMessages < MAX_MESSAGES_TO_SCAN) {
+    const searchPath = `/messages?q=${encodeURIComponent(q)}&maxResults=${GMAIL_PAGE_SIZE}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+    const searchResult = await gmailFetch(token.accessToken, searchPath) as GmailMessagesListResponse | null;
+    if (!searchResult?.messages?.length) break;
+    for (const m of searchResult.messages) {
+      totalMessages += 1;
+      threadIdSet.add(m.threadId);
+    }
+    pageToken = searchResult.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  return { messageCount: totalMessages, threadCount: threadIdSet.size };
 }
 
 // ============================================================================
@@ -1192,15 +1280,18 @@ export async function getWellKnownFolder(
 
 /**
  * List inbox threads directly via Gmail/MS Graph API.
+ * Supports offset/pageSize for pagination to avoid timeout.
  *
  * @param token - Token info
- * @param limit - Maximum threads to return
- * @returns Array of InboxThread
+ * @param limit - Page size (max threads this call)
+ * @param offset - Skip this many threads (default 0)
+ * @returns SearchListResult with threads, hasMore, nextOffset
  */
 export async function listInboxDirect(
   token: TokenInfo,
-  limit: number = 10
-): Promise<InboxThread[]> {
+  limit: number = 10,
+  offset: number = 0
+): Promise<SearchListResult> {
   if (token.isMicrosoft) {
     const allMessages: any[] = [];
     let nextLink: string | null = null;
@@ -1226,10 +1317,13 @@ export async function listInboxDirect(
       }
     }
 
-    const threads: InboxThread[] = [];
     const convEntries = Array.from(conversationMap.entries());
-    for (const [convId, messages] of convEntries) {
-      if (threads.length >= limit) break;
+    const total = convEntries.length;
+    const hasMore = total > offset + limit;
+    const pageEntries = convEntries.slice(offset, offset + limit);
+
+    const threads: InboxThread[] = [];
+    for (const [convId, messages] of pageEntries) {
       messages.sort((a: any, b: any) =>
         new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
       );
@@ -1247,9 +1341,9 @@ export async function listInboxDirect(
         messageCount: messages.length,
       });
     }
-    return threads;
+    return { threads, hasMore, nextOffset: offset + threads.length };
   } else {
-    return searchGmailDirect(token, "label:INBOX", limit);
+    return searchGmailDirect(token, "label:INBOX", limit, offset);
   }
 }
 

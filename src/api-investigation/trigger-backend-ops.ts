@@ -19,7 +19,8 @@ async function main() {
   try {
     // Get inbox first to have a thread ID
     console.log("\n📥 Fetching inbox...");
-    const threads = await listInbox(conn, 5);
+    const result = await listInbox(conn, { limit: 5 });
+    const threads = result.threads;
     console.log(`Found ${threads.length} threads`);
 
     if (threads.length === 0) {

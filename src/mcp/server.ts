@@ -7,7 +7,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
-  SendSchema, SearchSchema, InboxSchema, ReadSchema,
+  SendSchema, SearchSchema, InboxSchema, CountInboxSchema, ReadSchema,
   AccountsSchema, SwitchAccountSchema, ReplySchema, ReplyAllSchema, ForwardSchema,
   ReplySchemaDraftOnly, ReplyAllSchemaDraftOnly, ForwardSchemaDraftOnly,
   ArchiveSchema, DeleteSchema,
@@ -16,7 +16,7 @@ import {
   SnoozeSchema, UnsnoozeSchema, SnoozedSchema,
   AttachmentsSchema, DownloadAttachmentSchema,
   CalendarListSchema, CalendarCreateSchema, CalendarUpdateSchema, CalendarDeleteSchema, CalendarFreeBusySchema,
-  sendHandler, searchHandler, inboxHandler, readHandler,
+  sendHandler, searchHandler, inboxHandler, countInboxHandler, readHandler,
   accountsHandler, switchAccountHandler, replyHandler, replyAllHandler, forwardHandler,
   archiveHandler, deleteHandler,
   markReadHandler, markUnreadHandler, labelsHandler, getLabelsHandler, addLabelHandler, removeLabelHandler,
@@ -50,7 +50,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_search",
     {
-      description: "Search the Superhuman inbox (or all mail). Returns matching threads with a threadId for each. For 'all emails from today', 'how many emails', or broad queries: use limit 5000 (or omit for default 5000) so no emails are missed. Use includeDone=true for archived emails. Backend paginates automatically (default 5000, max 5000).",
+      description: "Search the Superhuman inbox (or all mail). Returns one page of matching threads with threadId for each. Use limit 100–200 and offset to get all results without timeout: first call with no offset, then call again with offset=<nextOffset> from the response to get the next page. Use includeDone=true for archived emails. For 'how many emails' use superhuman_inbox_count instead.",
       inputSchema: SearchSchema,
     },
     searchHandler
@@ -59,10 +59,19 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_inbox",
     {
-      description: "List emails from the Superhuman inbox. Returns thread summaries and a threadId for each. For 'all emails', 'emails from today', or 'show my inbox': use limit 5000 (or omit for default 5000) so no emails are missed. Backend paginates automatically (default 5000, max 5000).",
+      description: "List emails from the Superhuman inbox. Returns one page of thread summaries with threadId for each. Use limit 100–200 and offset to get all inbox without timeout: first call with no offset, then call again with offset=<nextOffset> from the response for the next page.",
       inputSchema: InboxSchema,
     },
     inboxHandler
+  );
+
+  server.registerTool(
+    "superhuman_inbox_count",
+    {
+      description: "Count messages and threads in the inbox (or all mail) matching an optional query. Use this for 'how many emails in the last 48 hours', 'count emails from today', etc. Fast for large mailboxes; does not fetch full thread details. Pass query e.g. 'after:2025/3/4' or 'newer_than:2d' for time range. Omit query to count entire inbox.",
+      inputSchema: CountInboxSchema,
+    },
+    countInboxHandler
   );
 
   server.registerTool(

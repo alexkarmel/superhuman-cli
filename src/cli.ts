@@ -1483,7 +1483,8 @@ function truncate(str: string | null | undefined, maxLen: number): string {
 async function cmdInbox(options: CliOptions) {
   const provider = await getProvider(options);
 
-  const threads = await listInbox(provider, { limit: options.limit });
+  const result = await listInbox(provider, { limit: options.limit });
+  const threads = result.threads;
 
   if (options.json) {
     console.log(JSON.stringify(threads, null, 2));
@@ -1518,11 +1519,12 @@ async function cmdSearch(options: CliOptions) {
 
   const provider = await getProvider(options);
 
-  const threads = await searchInbox(provider, {
+  const result = await searchInbox(provider, {
     query: options.query,
     limit: options.limit,
     includeDone: options.includeDone,
   });
+  const threads = result.threads;
 
   if (options.json) {
     console.log(JSON.stringify(threads, null, 2));
@@ -1530,7 +1532,7 @@ async function cmdSearch(options: CliOptions) {
     if (threads.length === 0) {
       info(`No results for "${options.query}"`);
     } else {
-      info(`Found ${threads.length} result(s) for "${options.query}":\n`);
+      info(`Found ${threads.length} result(s) for "${options.query}"${result.hasMore ? " (more available; use --limit and pagination)" : ""}:\n`);
       console.log(
         `${colors.dim}${"From".padEnd(25)} ${"Subject".padEnd(40)} ${"Date".padEnd(10)}${colors.reset}`
       );

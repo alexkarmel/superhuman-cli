@@ -11,7 +11,7 @@ import {
   textToHtml,
   type SuperhumanConnection,
 } from "../superhuman-api";
-import { listInbox, searchInbox, type SearchOptions } from "../inbox";
+import { listInbox, searchInbox, countInbox, type SearchOptions } from "../inbox";
 import { readThread } from "../read";
 import { listAccounts, switchAccount } from "../accounts";
 import { replyToThread, replyAllToThread, forwardThread } from "../reply";
@@ -81,12 +81,15 @@ export const SendSchema = EmailSchema;
 /**
  * Zod schema for inbox search parameters
  */
-/** Max threads to return per request; backend paginates to reach this. */
+/** Max threads per request (backend cap). Use 100–200 per call + offset to avoid MCP timeout. */
 const INBOX_SEARCH_MAX_LIMIT = 5000;
+/** Default page size per tool call so each call stays under ~60s timeout. */
+const INBOX_SEARCH_DEFAULT_PAGE_SIZE = 100;
 
 export const SearchSchema = z.object({
   query: z.string().describe("Search query string (e.g. 'after:2025/2/12' for date, or 'from:name')"),
-  limit: z.number().optional().describe("Maximum threads to return (default: 5000 so no emails are missed; max 5000). Use for broad queries like 'all emails from today'."),
+  limit: z.number().optional().describe("Page size (threads per call). Default 100. Use 100–200 and offset for large result sets to avoid timeout; repeat with offset to get all."),
+  offset: z.number().optional().describe("Skip this many threads (for next page). Omit or 0 for first page. Use with limit to paginate."),
   includeDone: z.boolean().optional().describe("If true, search all mail including archived/done. Use when the user asks to find archived emails or 'search everywhere'."),
 });
 
@@ -94,7 +97,17 @@ export const SearchSchema = z.object({
  * Zod schema for inbox listing
  */
 export const InboxSchema = z.object({
-  limit: z.number().optional().describe("Maximum threads to return (default: 5000 so no emails are missed; max 5000). Use for 'all emails', 'emails from today', etc."),
+  limit: z.number().optional().describe("Page size (threads per call). Default 100. Use 100–200 and offset to get all inbox without timeout."),
+  offset: z.number().optional().describe("Skip this many threads (for next page). Omit or 0 for first page."),
+});
+
+/**
+ * Zod schema for inbox count (fast; no thread fetches).
+ * Use for "how many emails in the last 48 hours", "count emails from today", etc.
+ */
+export const CountInboxSchema = z.object({
+  query: z.string().optional().describe("Gmail-style search query (e.g. 'after:2025/3/4' for last 48 hours, or 'newer_than:2d'). Omit to count all inbox."),
+  includeDone: z.boolean().optional().describe("If true, count all mail including archived/done. Default false = inbox only."),
 });
 
 /**
@@ -411,16 +424,23 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
 
   try {
     provider = await getMcpProvider();
-    const limit = Math.min(args.limit ?? 5000, INBOX_SEARCH_MAX_LIMIT);
+    const limit = Math.min(args.limit ?? INBOX_SEARCH_DEFAULT_PAGE_SIZE, INBOX_SEARCH_MAX_LIMIT);
+    const offset = args.offset ?? 0;
 
-    const threads = await searchInbox(provider, {
+    const result = await searchInbox(provider, {
       query: args.query,
       limit,
+      offset,
       includeDone: args.includeDone ?? false,
     });
+    const threads = result.threads;
 
     if (threads.length === 0) {
-      return successResult(`No results found for query: "${args.query}"`);
+      return successResult(
+        offset > 0
+          ? `No more results for query: "${args.query}" (offset ${offset}).`
+          : `No results found for query: "${args.query}"`
+      );
     }
 
     const resultsText = threads
@@ -430,7 +450,12 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
       })
       .join("\n\n");
 
-    return successResult(`Found ${threads.length} result(s) for query: "${args.query}". Use threadId with superhuman_read or superhuman_star.\n\n${resultsText}`);
+    const pageHint = result.hasMore
+      ? `\n\n(More results available. Call again with the same query and offset=${result.nextOffset} to get the next page.)`
+      : "";
+    return successResult(
+      `Found ${threads.length} result(s) for query: "${args.query}"${offset > 0 ? ` (page from offset ${offset})` : ""}. Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to search inbox: ${message}`);
@@ -447,11 +472,16 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
 
   try {
     provider = await getMcpProvider();
-    const limit = Math.min(args.limit ?? 5000, INBOX_SEARCH_MAX_LIMIT);
-    const threads = await listInbox(provider, { limit });
+    const limit = Math.min(args.limit ?? INBOX_SEARCH_DEFAULT_PAGE_SIZE, INBOX_SEARCH_MAX_LIMIT);
+    const offset = args.offset ?? 0;
+
+    const result = await listInbox(provider, { limit, offset });
+    const threads = result.threads;
 
     if (threads.length === 0) {
-      return successResult("No emails in inbox");
+      return successResult(
+        offset > 0 ? `No more emails in inbox (offset ${offset}).` : "No emails in inbox"
+      );
     }
 
     const resultsText = threads
@@ -461,10 +491,42 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
       })
       .join("\n\n");
 
-    return successResult(`Inbox (${threads.length} threads). Use threadId with superhuman_read or superhuman_star.\n\n${resultsText}`);
+    const pageHint = result.hasMore
+      ? `\n\n(More in inbox. Call again with offset=${result.nextOffset} to get the next page.)`
+      : "";
+    return successResult(
+      `Inbox (${threads.length} threads${offset > 0 ? `, page from offset ${offset}` : ""}). Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResult(`Failed to list inbox: ${message}`);
+  } finally {
+    if (provider) await provider.disconnect();
+  }
+}
+
+/**
+ * Handler for superhuman_inbox_count tool.
+ * Fast path: only paginates message IDs, no per-thread fetches (avoids 60s timeout for large inboxes).
+ */
+export async function countInboxHandler(args: z.infer<typeof CountInboxSchema>): Promise<ToolResult> {
+  let provider: ConnectionProvider | null = null;
+
+  try {
+    provider = await getMcpProvider();
+    const result = await countInbox(provider, {
+      query: args.query ?? "",
+      includeDone: args.includeDone ?? false,
+    });
+
+    const scope = args.includeDone ? "all mail" : "inbox";
+    const queryPart = args.query?.trim() ? ` for query "${args.query.trim()}"` : "";
+    return successResult(
+      `${scope}${queryPart}: ${result.messageCount} message(s), ${result.threadCount} thread(s).`
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return errorResult(`Failed to count inbox: ${message}`);
   } finally {
     if (provider) await provider.disconnect();
   }

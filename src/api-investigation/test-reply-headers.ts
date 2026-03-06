@@ -12,15 +12,16 @@ async function test() {
   const { Runtime, Input } = conn;
 
   // Get a thread from inbox
-  const inbox = await listInbox(conn, { limit: 1 });
-  if (inbox.length === 0) {
+  const result = await listInbox(conn, { limit: 1 });
+  const threads = result.threads;
+  if (threads.length === 0) {
     console.log("No threads in inbox");
     await disconnect(conn);
     return;
   }
 
-  const testThreadId = inbox[0].id;
-  console.log(`Test thread: ${testThreadId} - ${inbox[0].subject}`);
+  const testThreadId = threads[0].id;
+  console.log(`Test thread: ${testThreadId} - ${threads[0].subject}`);
 
   // Set the threadId properly
   await Runtime.evaluate({

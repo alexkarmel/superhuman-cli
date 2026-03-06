@@ -313,6 +313,7 @@ bun src/index.ts --mcp
 | Tool | Description |
 |------|-------------|
 | `superhuman_inbox` | List recent emails from inbox |
+| `superhuman_inbox_count` | **Count** messages/threads (fast; use for "how many emails in the last 48 hours" to avoid timeout) |
 | `superhuman_search` | Search emails |
 | `superhuman_read` | Read a thread |
 | `superhuman_send` | Send an email |
@@ -346,7 +347,7 @@ bun src/index.ts --mcp
 | `superhuman_calendar_free_busy` | Check free/busy availability |
 | `superhuman_ask_ai` | Ask AI to search emails, answer questions, or compose |
 
-**Inbox / search limits:** Inbox and search **paginate automatically** so no emails are missed. Default **5000** threads per request (max 5000). For “how many emails today?” Use query `after:YYYY/M/D` and limit 5000 to get every matching email.
+**Getting all emails without timeout (Superhuman desktop / MCP):** Search and inbox return **one page** per call (default 100 threads). To get every email for broad queries (e.g. "important emails from the past 24 hours"): call once with the query and no offset; if the response says more are available, call again with the same query and `offset` set to the `nextOffset` from the response. Repeat until no more pages. This keeps each tool call under the MCP ~60s timeout while still returning full thread lists (with threadIds for read/archive/etc.). **Count only:** use **superhuman_inbox_count** with e.g. `after:YYYY/M/D` or `newer_than:2d`; do not use search with a huge limit just to count.
 
 ### Claude Desktop Configuration
 
