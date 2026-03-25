@@ -448,7 +448,7 @@ export interface PersistedTokens {
 }
 
 // Config directory - evaluated at call time for testability
-function getConfigDir(): string {
+export function getConfigDir(): string {
   return (
     process.env.SUPERHUMAN_CLI_CONFIG_DIR ||
     `${process.env.HOME}/.config/superhuman-cli`
