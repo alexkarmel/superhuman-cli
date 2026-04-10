@@ -166,6 +166,34 @@ export function preRun(
   };
 }
 
+// ─── Filter ──────────────────────────────────────────────────────────
+
+/**
+ * Filter a list of thread IDs to those NOT already processed.
+ * Used by inbox/search tools to hide threads that have been acted on in
+ * previous runs — prevents the scheduled task from reprocessing the same
+ * emails every hour.
+ */
+export function filterUnprocessed(
+  accountEmail: string,
+  threadIds: string[]
+): { unprocessedIds: Set<string>; processedCount: number } {
+  if (threadIds.length === 0) {
+    return { unprocessedIds: new Set(), processedCount: 0 };
+  }
+  const db = getMemoryDb();
+  const placeholders = threadIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT thread_id FROM processed_threads
+       WHERE account_email = ? AND thread_id IN (${placeholders})`
+    )
+    .all(accountEmail, ...threadIds) as { thread_id: string }[];
+  const processedSet = new Set(rows.map((r) => r.thread_id));
+  const unprocessedIds = new Set(threadIds.filter((id) => !processedSet.has(id)));
+  return { unprocessedIds, processedCount: processedSet.size };
+}
+
 // ─── Record ──────────────────────────────────────────────────────────
 
 /**

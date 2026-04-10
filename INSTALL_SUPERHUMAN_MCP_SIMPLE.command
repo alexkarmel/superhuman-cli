@@ -44,6 +44,43 @@ SETUP_EXIT=0
   RED='\033[0;31m'
   NC='\033[0m'
 
+  # Safety guard: refuse to run from inside a superhuman-cli checkout.
+  # This installer rm -rf's $HOME/superhuman-cli and re-clones it. If the user
+  # launched it from inside their own working copy (e.g. a dev clone with
+  # uncommitted work), that wipes everything non-committed. Bail early.
+  INTENDED_INSTALL_DIR="$HOME/superhuman-cli"
+  CURRENT_PWD="$(pwd -P)"
+  RESOLVED_INSTALL_DIR="$(cd "$HOME" 2>/dev/null && pwd -P)/superhuman-cli"
+
+  # Check 1: PWD is the install dir or inside it
+  case "$CURRENT_PWD/" in
+    "$INTENDED_INSTALL_DIR"/*|"$RESOLVED_INSTALL_DIR"/*)
+      IN_INSTALL_DIR=1 ;;
+    *)
+      IN_INSTALL_DIR=0 ;;
+  esac
+
+  # Check 2: inside any git repo whose remote points at superhuman-cli
+  IN_SUPERHUMAN_REPO=0
+  if command -v git &>/dev/null && git -C "$CURRENT_PWD" rev-parse --is-inside-work-tree &>/dev/null; then
+    if git -C "$CURRENT_PWD" remote -v 2>/dev/null | grep -q 'superhuman-cli'; then
+      IN_SUPERHUMAN_REPO=1
+    fi
+  fi
+
+  if [ "$IN_INSTALL_DIR" = "1" ] || [ "$IN_SUPERHUMAN_REPO" = "1" ]; then
+    echo -e "${RED}❌ Refusing to run from inside a superhuman-cli checkout.${NC}"
+    echo ""
+    echo "   Current directory: $CURRENT_PWD"
+    echo ""
+    echo "   This installer wipes and re-clones $INTENDED_INSTALL_DIR, which"
+    echo "   would destroy any uncommitted work in your current checkout."
+    echo ""
+    echo "   To install: copy this .command file somewhere OUTSIDE the repo"
+    echo "   (e.g. your Desktop) and double-click it from there."
+    exit 1
+  fi
+
   echo "📋 Step 1: Checking prerequisites..."
 
   if ! command -v git &>/dev/null; then

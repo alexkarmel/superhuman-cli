@@ -46,8 +46,88 @@ import {
   type TokenInfo,
 } from "../token-api";
 import fs from "fs";
+import { filterUnprocessed, recordProcessed } from "../memory";
 
 const CDP_PORT = 9333;
+
+// ─── Memory integration helpers ──────────────────────────────────────
+//
+// These helpers wire the persistent memory module (src/memory) into the
+// inbox/search + action tools so that:
+//   1) inbox & search automatically HIDE threads that have been acted on
+//      in a previous run (prevents the scheduled-task reprocessing loop).
+//   2) action tools (archive, delete, star, mark_read, add_label, snooze,
+//      reply, reply_all, forward) automatically RECORD the thread as
+//      processed on success.
+//
+// Both paths are wrapped in try/catch so memory failures never break the
+// underlying email operation.
+
+/**
+ * Filter a list of threads against the memory DB, removing ones that have
+ * already been processed. Silently no-ops on any memory error.
+ */
+async function filterThreadsByMemory<T extends { id: string }>(
+  provider: ConnectionProvider,
+  threads: T[]
+): Promise<{ filtered: T[]; hiddenCount: number; memoryActive: boolean; accountEmail: string | null }> {
+  try {
+    const accountEmail = await provider.getCurrentEmail();
+    const ids = threads.map((t) => t.id);
+    const { unprocessedIds, processedCount } = filterUnprocessed(accountEmail, ids);
+    const filtered = threads.filter((t) => unprocessedIds.has(t.id));
+    return { filtered, hiddenCount: processedCount, memoryActive: true, accountEmail };
+  } catch (err) {
+    logMcpErrorToFile(`memory filter failed: ${err instanceof Error ? err.message : String(err)}`);
+    return { filtered: threads, hiddenCount: 0, memoryActive: false, accountEmail: null };
+  }
+}
+
+/**
+ * Record successful thread actions to the memory DB. Takes per-thread results
+ * so partial successes only record the ones that actually succeeded.
+ */
+async function recordActionResults(
+  provider: ConnectionProvider,
+  results: { threadId: string; success: boolean }[],
+  action: string
+): Promise<void> {
+  try {
+    const successful = results.filter((r) => r.success);
+    if (successful.length === 0) return;
+    const accountEmail = await provider.getCurrentEmail();
+    recordProcessed(
+      accountEmail,
+      successful.map((r) => ({ threadId: r.threadId, action }))
+    );
+  } catch (err) {
+    logMcpErrorToFile(`memory record failed for action=${action}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Record a single successful thread action via a ConnectionProvider.
+ */
+async function recordSingleAction(
+  provider: ConnectionProvider,
+  threadId: string,
+  action: string
+): Promise<void> {
+  await recordActionResults(provider, [{ threadId, success: true }], action);
+}
+
+/**
+ * Record a single successful thread action when only an email string is
+ * available (used by reply/reply_all/forward draft paths which use cached
+ * tokens rather than a ConnectionProvider).
+ */
+function recordProcessedForEmail(accountEmail: string, threadId: string, action: string): void {
+  try {
+    recordProcessed(accountEmail, [{ threadId, action }]);
+  } catch (err) {
+    logMcpErrorToFile(`memory record failed for action=${action}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 /**
  * Resolve a cached Superhuman token with idToken + userId.
@@ -91,6 +171,7 @@ export const SearchSchema = z.object({
   limit: z.number().optional().describe("Page size (threads per call). Default 100. Use 100–200 and offset for large result sets to avoid timeout; repeat with offset to get all."),
   offset: z.number().optional().describe("Skip this many threads (for next page). Omit or 0 for first page. Use with limit to paginate."),
   includeDone: z.boolean().optional().describe("If true, search all mail including archived/done. Use when the user asks to find archived emails or 'search everywhere'."),
+  includeProcessed: z.boolean().optional().describe("If true, include threads already acted on in a previous run (starred, archived, labeled, etc.). Default false hides them so scheduled tasks don't reprocess the same emails every hour. Set true for interactive 'show me everything' queries."),
 });
 
 /**
@@ -99,6 +180,7 @@ export const SearchSchema = z.object({
 export const InboxSchema = z.object({
   limit: z.number().optional().describe("Page size (threads per call). Default 100. Use 100–200 and offset to get all inbox without timeout."),
   offset: z.number().optional().describe("Skip this many threads (for next page). Omit or 0 for first page."),
+  includeProcessed: z.boolean().optional().describe("If true, include threads already acted on in a previous run (starred, archived, labeled, etc.). Default false hides them so scheduled tasks don't reprocess the same emails every hour. Set true for interactive 'show me everything' queries."),
 });
 
 /**
@@ -433,13 +515,22 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
       offset,
       includeDone: args.includeDone ?? false,
     });
-    const threads = result.threads;
+    const rawThreads = result.threads;
+
+    // Filter out threads already processed in a prior run (unless caller opts out).
+    const includeProcessed = args.includeProcessed ?? false;
+    const { filtered: threads, hiddenCount } = includeProcessed
+      ? { filtered: rawThreads, hiddenCount: 0 }
+      : await filterThreadsByMemory(provider, rawThreads);
 
     if (threads.length === 0) {
+      const hiddenNote = hiddenCount > 0
+        ? ` ${hiddenCount} thread(s) on this page were hidden because they were already processed in a previous run; pass includeProcessed=true to see them.`
+        : "";
       return successResult(
         offset > 0
-          ? `No more results for query: "${args.query}" (offset ${offset}).`
-          : `No results found for query: "${args.query}"`
+          ? `No more unprocessed results for query: "${args.query}" (offset ${offset}).${hiddenNote}`
+          : `No unprocessed results for query: "${args.query}".${hiddenNote}`
       );
     }
 
@@ -453,8 +544,11 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     const pageHint = result.hasMore
       ? `\n\n(More results available. Call again with the same query and offset=${result.nextOffset} to get the next page.)`
       : "";
+    const hiddenNote = hiddenCount > 0
+      ? ` (${hiddenCount} already-processed thread(s) hidden on this page)`
+      : "";
     return successResult(
-      `Found ${threads.length} result(s) for query: "${args.query}"${offset > 0 ? ` (page from offset ${offset})` : ""}. Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
+      `Found ${threads.length} unprocessed result(s) for query: "${args.query}"${offset > 0 ? ` (page from offset ${offset})` : ""}${hiddenNote}. Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -476,11 +570,22 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
     const offset = args.offset ?? 0;
 
     const result = await listInbox(provider, { limit, offset });
-    const threads = result.threads;
+    const rawThreads = result.threads;
+
+    // Filter out threads already processed in a prior run (unless caller opts out).
+    const includeProcessed = args.includeProcessed ?? false;
+    const { filtered: threads, hiddenCount } = includeProcessed
+      ? { filtered: rawThreads, hiddenCount: 0 }
+      : await filterThreadsByMemory(provider, rawThreads);
 
     if (threads.length === 0) {
+      const hiddenNote = hiddenCount > 0
+        ? ` ${hiddenCount} thread(s) on this page were hidden because they were already processed in a previous run; pass includeProcessed=true to see them.`
+        : "";
       return successResult(
-        offset > 0 ? `No more emails in inbox (offset ${offset}).` : "No emails in inbox"
+        offset > 0
+          ? `No more unprocessed emails in inbox (offset ${offset}).${hiddenNote}`
+          : `No unprocessed emails in inbox.${hiddenNote}`
       );
     }
 
@@ -494,8 +599,11 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
     const pageHint = result.hasMore
       ? `\n\n(More in inbox. Call again with offset=${result.nextOffset} to get the next page.)`
       : "";
+    const hiddenNote = hiddenCount > 0
+      ? ` (${hiddenCount} already-processed thread(s) hidden on this page)`
+      : "";
     return successResult(
-      `Inbox (${threads.length} threads${offset > 0 ? `, page from offset ${offset}` : ""}). Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
+      `Inbox (${threads.length} unprocessed thread(s)${offset > 0 ? `, page from offset ${offset}` : ""}${hiddenNote}). Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -703,6 +811,7 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
       body: textToHtml(args.body),
     });
     if (result.success) {
+      recordProcessedForEmail(token.email, args.threadId, "reply_draft");
       return successResult(
         `Reply draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${replyTo}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
       );
@@ -727,6 +836,8 @@ export async function replyHandler(args: z.infer<typeof ReplySchema>): Promise<T
     if (!result.success) {
       throw new Error(result.error || "Failed to create reply");
     }
+
+    await recordSingleAction(provider, args.threadId, send ? "reply_sent" : "reply_draft");
 
     if (send) {
       return successResult(`Reply sent successfully to thread ${args.threadId}`);
@@ -785,6 +896,7 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
       body: textToHtml(args.body),
     });
     if (result.success) {
+      recordProcessedForEmail(token.email, args.threadId, "reply_all_draft");
       return successResult(
         `Reply-all draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${to.join(", ")}${cc?.length ? `\nCc: ${cc.join(", ")}` : ""}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
       );
@@ -808,6 +920,8 @@ export async function replyAllHandler(args: z.infer<typeof ReplyAllSchema>): Pro
     if (!result.success) {
       throw new Error(result.error || "Failed to create reply-all");
     }
+
+    await recordSingleAction(provider, args.threadId, send ? "reply_all_sent" : "reply_all_draft");
 
     if (send) {
       return successResult(`Reply-all sent successfully to thread ${args.threadId}`);
@@ -904,6 +1018,7 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
       body: forwardBody,
     });
     if (result.success) {
+      recordProcessedForEmail(token.email, args.threadId, "forward_draft");
       return successResult(
         `Forward draft created for thread ${args.threadId} (visible in Superhuman inbox and in the email thread).\nTo: ${args.toEmail}\nSubject: ${subject}\nDraft ID: ${result.draftId ?? "(unknown)"}`
       );
@@ -922,6 +1037,8 @@ export async function forwardHandler(args: z.infer<typeof ForwardSchema>): Promi
     if (!result.success) {
       throw new Error(result.error || "Failed to create forward");
     }
+
+    await recordSingleAction(provider, args.threadId, send ? "forward_sent" : "forward_draft");
 
     if (send) {
       return successResult(`Email forwarded successfully to ${args.toEmail}`);
@@ -954,6 +1071,8 @@ export async function archiveHandler(args: z.infer<typeof ArchiveSchema>): Promi
       const result = await archiveThread(provider, threadId);
       results.push({ threadId, success: result.success, error: result.error });
     }
+
+    await recordActionResults(provider, results, "archived");
 
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
@@ -994,6 +1113,8 @@ export async function deleteHandler(args: z.infer<typeof DeleteSchema>): Promise
       results.push({ threadId, success: result.success, error: result.error });
     }
 
+    await recordActionResults(provider, results, "deleted");
+
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
 
@@ -1032,6 +1153,8 @@ export async function markReadHandler(args: z.infer<typeof MarkReadSchema>): Pro
       const result = await markAsRead(provider, threadId);
       results.push({ threadId, success: result.success, error: result.error });
     }
+
+    await recordActionResults(provider, results, "marked_read");
 
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
@@ -1171,6 +1294,8 @@ export async function addLabelHandler(args: z.infer<typeof AddLabelSchema>): Pro
       results.push({ threadId, success: result.success, error: result.error });
     }
 
+    await recordActionResults(provider, results, `labeled:${args.labelId}`);
+
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
 
@@ -1248,6 +1373,8 @@ export async function starHandler(args: z.infer<typeof StarSchema>): Promise<Too
       const result = await starThread(provider, threadId);
       results.push({ threadId, success: result.success, error: result.error });
     }
+
+    await recordActionResults(provider, results, "starred");
 
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
@@ -1357,6 +1484,12 @@ export async function snoozeHandler(args: z.infer<typeof SnoozeSchema>): Promise
     provider = await getMcpProvider();
 
     const results = await snoozeThreadViaProvider(provider, args.threadIds, snoozeTime);
+
+    await recordActionResults(
+      provider,
+      args.threadIds.map((id, i) => ({ threadId: id, success: results[i]?.success ?? false })),
+      "snoozed"
+    );
 
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;

@@ -50,7 +50,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_search",
     {
-      description: "Search the Superhuman inbox (or all mail). Returns one page of matching threads with threadId for each. Use limit 100–200 and offset to get all results without timeout: first call with no offset, then call again with offset=<nextOffset> from the response to get the next page. Use includeDone=true for archived emails. For 'how many emails' use superhuman_inbox_count instead.",
+      description: "Search the Superhuman inbox (or all mail). Returns one page of matching threads with threadId for each. Use limit 100–200 and offset to get all results without timeout: first call with no offset, then call again with offset=<nextOffset> from the response to get the next page. Use includeDone=true for archived emails. For 'how many emails' use superhuman_inbox_count instead. Threads you have already acted on in a previous run (starred, archived, labeled, replied, etc.) are hidden by default so scheduled tasks don't reprocess the same emails every hour; pass includeProcessed=true to see them.",
       inputSchema: SearchSchema,
     },
     searchHandler
@@ -59,7 +59,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "superhuman_inbox",
     {
-      description: "List emails from the Superhuman inbox. Returns one page of thread summaries with threadId for each. Use limit 100–200 and offset to get all inbox without timeout: first call with no offset, then call again with offset=<nextOffset> from the response for the next page.",
+      description: "List emails from the Superhuman inbox. Returns one page of thread summaries with threadId for each. Use limit 100–200 and offset to get all inbox without timeout: first call with no offset, then call again with offset=<nextOffset> from the response for the next page. Threads you have already acted on in a previous run (starred, archived, labeled, replied, etc.) are hidden by default so scheduled tasks don't reprocess the same emails every hour; pass includeProcessed=true to see them.",
       inputSchema: InboxSchema,
     },
     inboxHandler
