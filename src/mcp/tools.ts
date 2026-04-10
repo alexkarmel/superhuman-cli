@@ -130,6 +130,98 @@ function recordProcessedForEmail(accountEmail: string, threadId: string, action:
 }
 
 /**
+ * Hard cap on how many raw threads the memory-aware inbox/search scan will
+ * pull from the API across its internal pagination loop. Protects against
+ * degenerate cases where almost every thread is already-processed and we
+ * would otherwise scan the entire inbox in a single tool call.
+ *
+ * 500 = 5 pages at the default 100/page chunk, which comfortably fits
+ * inside the MCP 60s timeout even on slow connections.
+ */
+const MEMORY_SCAN_MAX_RAW = 500;
+
+/**
+ * Fetch pages from `fetchPage` and filter through memory until we have
+ * `targetCount` unprocessed threads, the API is exhausted, or we've
+ * scanned `MEMORY_SCAN_MAX_RAW` raw threads.
+ *
+ * Fixes the "unreachable tail" bug: if the first API page is dominated by
+ * already-processed threads (common for coworkers who star a lot — stars
+ * stay in inbox and consume page-1 slots forever), a single fetch+filter
+ * would return a short/empty page and the scheduled task would skip. This
+ * helper keeps pulling pages until the caller's desired unprocessed count
+ * is met, so high-volume inboxes with heavy starred history still surface
+ * the unprocessed work.
+ *
+ * When `skipFilter` is true, does a single fetch and returns it unchanged
+ * (matches the legacy `includeProcessed=true` path).
+ */
+export async function fetchUnprocessedPage<T extends { id: string }>(
+  provider: ConnectionProvider,
+  startOffset: number,
+  targetCount: number,
+  fetchPage: (offset: number, limit: number) => Promise<{ threads: T[]; hasMore: boolean; nextOffset: number }>,
+  skipFilter: boolean
+): Promise<{
+  threads: T[];
+  hiddenCount: number;
+  rawScanned: number;
+  lastOffset: number;
+  apiHasMore: boolean;
+  hitScanCap: boolean;
+}> {
+  if (skipFilter) {
+    const page = await fetchPage(startOffset, targetCount);
+    return {
+      threads: page.threads,
+      hiddenCount: 0,
+      rawScanned: page.threads.length,
+      lastOffset: page.nextOffset,
+      apiHasMore: page.hasMore,
+      hitScanCap: false,
+    };
+  }
+
+  const FETCH_CHUNK = Math.max(targetCount, 100);
+  const collected: T[] = [];
+  let hiddenCount = 0;
+  let rawScanned = 0;
+  let currentOffset = startOffset;
+  let apiHasMore = true;
+
+  while (collected.length < targetCount && apiHasMore && rawScanned < MEMORY_SCAN_MAX_RAW) {
+    const remainingScanBudget = MEMORY_SCAN_MAX_RAW - rawScanned;
+    const thisFetch = Math.min(FETCH_CHUNK, remainingScanBudget);
+    const page = await fetchPage(currentOffset, thisFetch);
+
+    rawScanned += page.threads.length;
+    apiHasMore = page.hasMore;
+    currentOffset = page.nextOffset;
+
+    if (page.threads.length === 0) break;
+
+    const { filtered, hiddenCount: hiddenThisPage } = await filterThreadsByMemory(provider, page.threads);
+    hiddenCount += hiddenThisPage;
+    for (const t of filtered) {
+      if (collected.length >= targetCount) break;
+      collected.push(t);
+    }
+  }
+
+  const hitScanCap =
+    collected.length < targetCount && rawScanned >= MEMORY_SCAN_MAX_RAW && apiHasMore;
+
+  return {
+    threads: collected,
+    hiddenCount,
+    rawScanned,
+    lastOffset: currentOffset,
+    apiHasMore,
+    hitScanCap,
+  };
+}
+
+/**
  * Resolve a cached Superhuman token with idToken + userId.
  * Tries any cached account with Superhuman credentials.
  */
@@ -508,24 +600,26 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
     provider = await getMcpProvider();
     const limit = Math.min(args.limit ?? INBOX_SEARCH_DEFAULT_PAGE_SIZE, INBOX_SEARCH_MAX_LIMIT);
     const offset = args.offset ?? 0;
-
-    const result = await searchInbox(provider, {
-      query: args.query,
-      limit,
-      offset,
-      includeDone: args.includeDone ?? false,
-    });
-    const rawThreads = result.threads;
-
-    // Filter out threads already processed in a prior run (unless caller opts out).
     const includeProcessed = args.includeProcessed ?? false;
-    const { filtered: threads, hiddenCount } = includeProcessed
-      ? { filtered: rawThreads, hiddenCount: 0 }
-      : await filterThreadsByMemory(provider, rawThreads);
+    const includeDone = args.includeDone ?? false;
+
+    // Internally paginate through the API until we have `limit` unprocessed
+    // threads or we exhaust the result set / hit the raw-scan cap. See
+    // inboxHandler for the full rationale.
+    const scan = await fetchUnprocessedPage(
+      provider,
+      offset,
+      limit,
+      async (off, lim) =>
+        searchInbox(provider!, { query: args.query, limit: lim, offset: off, includeDone }),
+      includeProcessed
+    );
+    const threads = scan.threads;
+    const hiddenCount = scan.hiddenCount;
 
     if (threads.length === 0) {
       const hiddenNote = hiddenCount > 0
-        ? ` ${hiddenCount} thread(s) on this page were hidden because they were already processed in a previous run; pass includeProcessed=true to see them.`
+        ? ` Scanned ${scan.rawScanned} thread(s), all already processed in a prior run. Pass includeProcessed=true to see them.`
         : "";
       return successResult(
         offset > 0
@@ -541,14 +635,17 @@ export async function searchHandler(args: z.infer<typeof SearchSchema>): Promise
       })
       .join("\n\n");
 
-    const pageHint = result.hasMore
-      ? `\n\n(More results available. Call again with the same query and offset=${result.nextOffset} to get the next page.)`
+    const pageHint = scan.apiHasMore
+      ? `\n\n(More results available. Call again with the same query and offset=${scan.lastOffset} to get the next page.)`
       : "";
     const hiddenNote = hiddenCount > 0
-      ? ` (${hiddenCount} already-processed thread(s) hidden on this page)`
+      ? ` (${hiddenCount} already-processed thread(s) skipped across ${scan.rawScanned} scanned)`
+      : "";
+    const capNote = scan.hitScanCap
+      ? `\n\n(Stopped after scanning ${MEMORY_SCAN_MAX_RAW} raw threads without filling the page. Call again with offset=${scan.lastOffset} to continue scanning.)`
       : "";
     return successResult(
-      `Found ${threads.length} unprocessed result(s) for query: "${args.query}"${offset > 0 ? ` (page from offset ${offset})` : ""}${hiddenNote}. Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
+      `Found ${threads.length} unprocessed result(s) for query: "${args.query}"${offset > 0 ? ` (page from offset ${offset})` : ""}${hiddenNote}. Use threadId with superhuman_read or superhuman_star.${pageHint}${capNote}\n\n${resultsText}`
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -568,19 +665,25 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
     provider = await getMcpProvider();
     const limit = Math.min(args.limit ?? INBOX_SEARCH_DEFAULT_PAGE_SIZE, INBOX_SEARCH_MAX_LIMIT);
     const offset = args.offset ?? 0;
-
-    const result = await listInbox(provider, { limit, offset });
-    const rawThreads = result.threads;
-
-    // Filter out threads already processed in a prior run (unless caller opts out).
     const includeProcessed = args.includeProcessed ?? false;
-    const { filtered: threads, hiddenCount } = includeProcessed
-      ? { filtered: rawThreads, hiddenCount: 0 }
-      : await filterThreadsByMemory(provider, rawThreads);
+
+    // Internally paginate through the API until we have `limit` unprocessed
+    // threads or we exhaust the inbox / hit the raw-scan cap. This prevents
+    // the unreachable-tail bug where heavy starred history buries the
+    // remaining unprocessed work past the first API page.
+    const scan = await fetchUnprocessedPage(
+      provider,
+      offset,
+      limit,
+      async (off, lim) => listInbox(provider!, { limit: lim, offset: off }),
+      includeProcessed
+    );
+    const threads = scan.threads;
+    const hiddenCount = scan.hiddenCount;
 
     if (threads.length === 0) {
       const hiddenNote = hiddenCount > 0
-        ? ` ${hiddenCount} thread(s) on this page were hidden because they were already processed in a previous run; pass includeProcessed=true to see them.`
+        ? ` Scanned ${scan.rawScanned} thread(s), all already processed in a prior run. Pass includeProcessed=true to see them.`
         : "";
       return successResult(
         offset > 0
@@ -596,14 +699,17 @@ export async function inboxHandler(args: z.infer<typeof InboxSchema>): Promise<T
       })
       .join("\n\n");
 
-    const pageHint = result.hasMore
-      ? `\n\n(More in inbox. Call again with offset=${result.nextOffset} to get the next page.)`
+    const pageHint = scan.apiHasMore
+      ? `\n\n(More in inbox. Call again with offset=${scan.lastOffset} to get the next page.)`
       : "";
     const hiddenNote = hiddenCount > 0
-      ? ` (${hiddenCount} already-processed thread(s) hidden on this page)`
+      ? ` (${hiddenCount} already-processed thread(s) skipped across ${scan.rawScanned} scanned)`
+      : "";
+    const capNote = scan.hitScanCap
+      ? `\n\n(Stopped after scanning ${MEMORY_SCAN_MAX_RAW} raw threads without filling the page. The deeper tail of already-processed threads is being skipped; call again with offset=${scan.lastOffset} to continue scanning.)`
       : "";
     return successResult(
-      `Inbox (${threads.length} unprocessed thread(s)${offset > 0 ? `, page from offset ${offset}` : ""}${hiddenNote}). Use threadId with superhuman_read or superhuman_star.${pageHint}\n\n${resultsText}`
+      `Inbox (${threads.length} unprocessed thread(s)${offset > 0 ? `, page from offset ${offset}` : ""}${hiddenNote}). Use threadId with superhuman_read or superhuman_star.${pageHint}${capNote}\n\n${resultsText}`
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
